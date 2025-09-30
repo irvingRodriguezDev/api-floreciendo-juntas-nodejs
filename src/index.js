@@ -1,14 +1,13 @@
 require("dotenv").config();
 const express = require("express");
 const db = require("./models");
-const authRoutes = require("./routes/AuthRoutes");
 const seedData = require("./config/seed");
-
+const routes = require("./routes");
 const app = express();
 app.use(express.json());
 
 // Rutas
-app.use("/api/auth", authRoutes);
+app.use("/api", routes);
 
 const PORT = process.env.PORT || 3000;
 db.sequelize

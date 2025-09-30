@@ -1,7 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../../models");
-
+const stripe = require("../../config/stripe");
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -12,6 +12,11 @@ const register = async (req, res) => {
     if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    // Crear cliente en Stripe
+    const stripeCustomer = await stripe.customers.create({
+      email,
+      name: username,
+    });
 
     // Usuario normal se registra con roleId = 4
     const newUser = await User.create({
@@ -20,6 +25,7 @@ const register = async (req, res) => {
       name,
       password: hashedPassword,
       roleId: 4,
+      stripe_id: stripeCustomer.id,
     });
 
     res.json({
@@ -30,6 +36,7 @@ const register = async (req, res) => {
         email: newUser.email,
         name: newUser.name,
         roleId: newUser.roleId,
+        stripe_id: newUser.stripe_id,
       },
     });
   } catch (error) {
