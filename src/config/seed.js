@@ -15,13 +15,13 @@ async function seedData() {
   }
 
   // Crear usuario admin por defecto
-  const adminExists = await User.findOne({ where: { username: "admin" } });
+  const adminExists = await User.findOne({ where: { name: "admin" } });
   if (!adminExists) {
     const hashedPassword = await bcrypt.hash("admin123", 10);
     await User.create({
-      username: "admin",
-      name: "irving",
-      email: "irving@g.com",
+      name: "admin",
+      email: "admin@g.com",
+      direction: "mexico zona norte",
       password: hashedPassword,
       roleId: 1,
     });

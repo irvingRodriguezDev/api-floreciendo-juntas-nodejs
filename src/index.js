@@ -3,8 +3,21 @@ const express = require("express");
 const db = require("./models");
 const seedData = require("./config/seed");
 const routes = require("./routes");
+const cors = require("cors");
+
 const app = express();
+
+// Middlewares
 app.use(express.json());
+
+// CORS debe ir antes de las rutas
+app.use(
+  cors({
+    origin: "*", // o "*" para desarrollo
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 
 // Rutas
 app.use("/api", routes);
