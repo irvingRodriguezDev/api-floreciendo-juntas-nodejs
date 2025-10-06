@@ -1,8 +1,8 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { User } = require("../../models");
-const stripe = require("../../config/stripe");
-const { addToBlacklist } = require("../../utils/tokenBlacklist");
+const { User } = require("../models");
+const stripe = require("../config/stripe");
+const { addToBlacklist } = require("../utils/tokenBlacklist");
 
 // Registro
 // Registro normal (usuario final)

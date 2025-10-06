@@ -6,7 +6,7 @@ const {
   createUserWithRole,
   me,
   logout,
-} = require("../controllers/Auth/AuthController");
+} = require("../controllers/AuthController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
 

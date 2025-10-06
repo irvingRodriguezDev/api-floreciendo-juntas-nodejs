@@ -1,5 +1,5 @@
-const stripe = require("../../config/stripe");
-const { User } = require("../../models");
+const stripe = require("../config/stripe");
+const { User } = require("../models");
 
 const createPayment = async (req, res) => {
   try {
