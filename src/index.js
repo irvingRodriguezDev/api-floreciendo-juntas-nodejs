@@ -8,26 +8,33 @@ const cors = require("cors");
 const app = express();
 
 // Middlewares
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-// CORS debe ir antes de las rutas
+// CORS
 app.use(
   cors({
-    origin: "*", // o "*" para desarrollo
+    origin: "*", // en producción reemplazar con tu dominio
     methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
+    credentials: false, // cambiar a true solo con un origen específico
   })
 );
 
 // Rutas
 app.use("/api", routes);
 
+// Middleware para rutas no encontradas
+app.use((req, res) => {
+  res.status(404).json({ msg: "Ruta no encontrada" });
+});
+
 const PORT = process.env.PORT || 3000;
+
 db.sequelize
-  .sync({ alter: true })
+  .sync({ alter: true }) // ok para desarrollo
   .then(async () => {
     console.log("Base de datos sincronizada");
-    await seedData(); // Insertar roles + admin
+    await seedData();
     app.listen(PORT, () =>
       console.log(`Servidor corriendo en http://localhost:${PORT}`)
     );
