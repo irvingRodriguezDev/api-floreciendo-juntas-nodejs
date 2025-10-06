@@ -21,8 +21,8 @@ async function seedData() {
     await User.create({
       name: "admin",
       email: "admin@g.com",
-      direction: "mexico zona norte",
       password: hashedPassword,
+      phone: "7223224244",
       roleId: 1,
     });
     console.log("Usuario admin creado: admin / admin123");

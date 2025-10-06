@@ -2,12 +2,13 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../../models");
 const stripe = require("../../config/stripe");
+const { addToBlacklist } = require("../../utils/tokenBlacklist");
+
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
   try {
-    const { password, email, name, direction } = req.body;
-
+    const { password, email, name, phone } = req.body;
     // Verificar si el usuario ya existe
     const exists = await User.findOne({ where: { email } });
     if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
@@ -19,13 +20,14 @@ const register = async (req, res) => {
     const stripeCustomer = await stripe.customers.create({
       email,
       name,
+      phone,
     });
 
     // Crear usuario en la base de datos
     const newUser = await User.create({
       email,
       name,
-      direction,
+      phone,
       password: hashedPassword,
       roleId: 4,
       stripe_id: stripeCustomer.id,
@@ -48,8 +50,8 @@ const register = async (req, res) => {
       token,
       user: {
         id: newUser.id,
-        direction: newUser.direction,
         email: newUser.email,
+        phone: newUser.phone,
         name: newUser.name,
         roleId: newUser.roleId,
         stripe_id: newUser.stripe_id,
@@ -86,7 +88,7 @@ const login = async (req, res) => {
 const profile = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
-      attributes: ["id", "direction", "email", "name", "createdAt"],
+      attributes: ["id", "email", "name", "createdAt"],
     });
     res.json({ msg: "Perfil de usuario", user });
   } catch (error) {
@@ -99,7 +101,7 @@ const profile = async (req, res) => {
 const me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
-      attributes: ["id", "direction", "email", "name"],
+      attributes: ["id", "email", "name"],
     });
     res.status(200).json({ user });
   } catch (error) {
@@ -112,7 +114,7 @@ const me = async (req, res) => {
 //crear rol del admin
 const createUserWithRole = async (req, res) => {
   try {
-    const { name, password, roleId, email } = req.body;
+    const { name, password, roleId, email, direction } = req.body;
 
     if (roleId < 1 || roleId > 3) {
       return res
@@ -128,14 +130,18 @@ const createUserWithRole = async (req, res) => {
       name,
       password: hashedPassword,
       roleId,
+      direction,
+      email,
     });
 
     res.json({
       msg: "Usuario creado por admin",
       user: {
         id: newUser.id,
+        email: newUser.email,
         name: newUser.name,
         roleId: newUser.roleId,
+        direction: newUser.direction,
       },
     });
   } catch (error) {
@@ -145,4 +151,23 @@ const createUserWithRole = async (req, res) => {
   }
 };
 
-module.exports = { register, login, profile, createUserWithRole, me };
+const logout = (req, res) => {
+  const token = req.header("Authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return res.status(400).json({ msg: "Token no proporcionado" });
+  }
+
+  addToBlacklist(token);
+
+  res.status(200).json({ msg: "Logout exitoso. Token invalidado." });
+};
+
+module.exports = {
+  register,
+  login,
+  profile,
+  createUserWithRole,
+  me,
+  logout,
+};
