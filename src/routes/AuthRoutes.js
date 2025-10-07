@@ -6,6 +6,7 @@ const {
   createUserWithRole,
   me,
   logout,
+  resetPassword,
 } = require("../controllers/AuthController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
@@ -13,6 +14,7 @@ const checkRole = require("../middlewares/roleMiddleware");
 const router = express.Router();
 
 router.post("/register", register); // usuario normal
+router.post("/reset-password", resetPassword); // usuario normal
 router.post("/login", login);
 router.get("/profile", authMiddleware, profile);
 router.get("/me", authMiddleware, me);

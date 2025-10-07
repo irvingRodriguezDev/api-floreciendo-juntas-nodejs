@@ -8,6 +8,9 @@ const createCourse = async (req, res) => {
 
     // Generar slug automáticamente
     const slug = slugify(title, { lower: true, strict: true });
+    const coverImage = req.file
+      ? `/uploads/courses/${req.file.filename}`
+      : null;
 
     const course = await Course.create({
       title,
@@ -16,6 +19,7 @@ const createCourse = async (req, res) => {
       level,
       thumbnailUrl,
       hasCertificate,
+      coverImage,
     });
 
     return res.status(201).json(course);

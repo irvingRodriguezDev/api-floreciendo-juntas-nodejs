@@ -17,7 +17,7 @@ const Course = sequelize.define(
     slug: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true, // importante para SEO o URLs amigables
+      unique: true,
     },
     description: {
       type: DataTypes.TEXT,
@@ -26,6 +26,11 @@ const Course = sequelize.define(
     thumbnailUrl: {
       type: DataTypes.STRING,
       allowNull: true,
+    },
+    // 👇 Nueva propiedad: imagen principal o portada del curso
+    coverImage: {
+      type: DataTypes.STRING,
+      allowNull: true, // Se guardará la URL (local o S3)
     },
     level: {
       type: DataTypes.ENUM("principiante", "intermedio", "avanzado"),
@@ -55,7 +60,6 @@ const Course = sequelize.define(
   }
 );
 
-// 🔗 Asociaciones
 Course.associate = (models) => {
   Course.hasOne(models.CourseVideo, {
     foreignKey: "courseId",
