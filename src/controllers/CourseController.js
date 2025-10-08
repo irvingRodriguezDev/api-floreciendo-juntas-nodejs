@@ -1,16 +1,18 @@
 const { Course } = require("../models");
 const slugify = require("slugify");
-
+const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const createCourse = async (req, res) => {
   try {
     const { title, description, level, thumbnailUrl, hasCertificate } =
       req.body;
 
-    // Generar slug automáticamente
     const slug = slugify(title, { lower: true, strict: true });
-    const coverImage = req.file
-      ? `/uploads/courses/${req.file.filename}`
-      : null;
+
+    let coverImage = null;
+    let path = "courses";
+    if (req.file) {
+      coverImage = await uploadToS3(req.file, path);
+    }
 
     const course = await Course.create({
       title,
@@ -22,7 +24,9 @@ const createCourse = async (req, res) => {
       coverImage,
     });
 
-    return res.status(201).json(course);
+    return res
+      .status(201)
+      .json({ message: "Curso creado correctamente", course });
   } catch (error) {
     console.error(error);
     return res

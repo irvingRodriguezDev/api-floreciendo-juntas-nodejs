@@ -23,7 +23,10 @@ const User = sequelize.define(
     phone: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
+      unique: {
+        name: "unique_phone_constraint",
+        msg: "Este número ya está registrado",
+      },
     },
     password: {
       type: DataTypes.STRING,

@@ -1,5 +1,5 @@
 const { CourseVideo } = require("../models");
-const { uploadToS3 } = require("../utils/s3");
+const { uploadToS3 } = require("../config/s3");
 
 // Subir video
 const uploadVideo = async (req, res) => {
