@@ -1,4 +1,3 @@
-// models/Course.js
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
@@ -27,10 +26,9 @@ const Course = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
-    // 👇 Nueva propiedad: imagen principal o portada del curso
     coverImage: {
       type: DataTypes.STRING,
-      allowNull: true, // Se guardará la URL (local o S3)
+      allowNull: true, // URL o S3
     },
     level: {
       type: DataTypes.ENUM("principiante", "intermedio", "avanzado"),
@@ -53,6 +51,17 @@ const Course = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    // 🆕 Nuevo campo
+    system_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: "systems",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "RESTRICT",
+    },
   },
   {
     tableName: "courses",
@@ -61,6 +70,11 @@ const Course = sequelize.define(
 );
 
 Course.associate = (models) => {
+  Course.belongsTo(models.System, {
+    foreignKey: "system_id",
+    as: "system",
+  });
+
   Course.hasOne(models.CourseVideo, {
     foreignKey: "courseId",
     as: "video",

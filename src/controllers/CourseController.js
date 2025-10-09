@@ -1,19 +1,44 @@
-const { Course } = require("../models");
+const { Course, System } = require("../models");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const createCourse = async (req, res) => {
   try {
-    const { title, description, level, thumbnailUrl, hasCertificate } =
-      req.body;
+    const {
+      title,
+      description,
+      level,
+      thumbnailUrl,
+      hasCertificate,
+      system_id, // 👈 nuevo campo
+    } = req.body;
 
+    // Validar campos obligatorios
+    if (!title || !description || !system_id) {
+      return res.status(400).json({
+        message:
+          "Los campos 'title', 'description' y 'system_id' son obligatorios",
+      });
+    }
+
+    // Verificar que el sistema exista
+    const system = await System.findByPk(system_id);
+    if (!system) {
+      return res
+        .status(404)
+        .json({ message: "El sistema especificado no existe" });
+    }
+
+    // Generar el slug
     const slug = slugify(title, { lower: true, strict: true });
 
+    // Subir imagen de portada (si existe)
     let coverImage = null;
-    let path = "courses";
+    const path = "courses";
     if (req.file) {
       coverImage = await uploadToS3(req.file, path);
     }
 
+    // Crear el curso
     const course = await Course.create({
       title,
       slug,
@@ -22,18 +47,22 @@ const createCourse = async (req, res) => {
       thumbnailUrl,
       hasCertificate,
       coverImage,
+      system_id, // 👈 se guarda la relación
     });
 
-    return res
-      .status(201)
-      .json({ message: "Curso creado correctamente", course });
+    return res.status(201).json({
+      message: "Curso creado correctamente",
+      course,
+    });
   } catch (error) {
-    console.error(error);
-    return res
-      .status(500)
-      .json({ msg: "Error al crear curso", error: error.message });
+    console.error("Error al crear curso:", error);
+    return res.status(500).json({
+      message: "Error al crear curso",
+      error: error.message,
+    });
   }
 };
+
 // Listar todos los cursos
 const getCourses = async (req, res) => {
   try {
