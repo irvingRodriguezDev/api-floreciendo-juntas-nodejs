@@ -36,7 +36,7 @@ db.sequelize
     console.log("Base de datos sincronizada");
     await seedData();
     app.listen(PORT, () =>
-      console.log(`Servidor corriendo en http://localhost:${PORT}`)
+      console.log(`Servidor corriendo en http://0.0.0.0:${PORT}`)
     );
   })
   .catch((err) => console.error("Error DB:", err));

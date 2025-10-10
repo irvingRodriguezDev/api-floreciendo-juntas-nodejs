@@ -1,6 +1,7 @@
 const { Course, System } = require("../models");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
+const getS3Url = require("../helpers/getS3Url");
 const createCourse = async (req, res) => {
   try {
     const {
@@ -31,12 +32,7 @@ const createCourse = async (req, res) => {
     // Generar el slug
     const slug = slugify(title, { lower: true, strict: true });
 
-    // Subir imagen de portada (si existe)
-    let coverImage = null;
-    const path = "courses";
-    if (req.file) {
-      coverImage = await uploadToS3(req.file, path);
-    }
+    // Subir imagen usando el id del curso
 
     // Crear el curso
     const course = await Course.create({
@@ -46,10 +42,15 @@ const createCourse = async (req, res) => {
       level,
       thumbnailUrl,
       hasCertificate,
-      coverImage,
-      system_id, // 👈 se guarda la relación
+      system_id,
     });
 
+    // Subir imagen usando el id del curso
+    if (req.file) {
+      const coverImagePath = await uploadToS3("courses", req.file, course.id);
+      course.coverImage = coverImagePath;
+      await course.save();
+    }
     return res.status(201).json({
       message: "Curso creado correctamente",
       course,
@@ -66,28 +67,35 @@ const createCourse = async (req, res) => {
 // Listar todos los cursos
 const getCourses = async (req, res) => {
   try {
-    const courses = await Course.findAll({
-      where: { isActive: true },
-    });
-    return res.json(courses);
+    const courses = await Course.findAll();
+
+    const formatted = courses.map((c) => ({
+      ...c.toJSON(),
+      cover_image_url: getS3Url(c.coverImage),
+    }));
+
+    res.json(formatted);
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ msg: "Error al obtener cursos" });
+    res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
 
-// Obtener curso por id
+// Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
-    const course = await Course.findByPk(id, {
-      include: ["video", "reviews", "posts", "progresses"],
-    });
+    const course = await Course.findByPk(id);
+
     if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
-    return res.json(course);
+
+    res.json({
+      ...course.toJSON(),
+      cover_image_url: getS3Url(course.coverImage),
+    });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ msg: "Error al obtener curso" });
+    res.status(500).json({ msg: "Error al obtener el curso" });
   }
 };
 
@@ -95,10 +103,30 @@ const getCourseById = async (req, res) => {
 const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
+
     const course = await Course.findByPk(id);
     if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
 
-    await course.update(req.body);
+    let coverImage = course.coverImage; // mantenemos la actual por defecto
+    const path = "courses";
+
+    if (req.file) {
+      // Si se sube una nueva imagen, la subimos al S3
+      const newImage = await uploadToS3(req.file, path);
+
+      // (Opcional) eliminar la imagen anterior si existe
+      if (course.coverImage) {
+        await deleteFromS3(course.coverImage); // <- si tienes esta función
+      }
+
+      coverImage = newImage;
+    }
+
+    // Actualizamos el curso
+    await course.update({
+      ...req.body,
+      coverImage, // asignamos la imagen actual o la nueva
+    });
 
     return res.json(course);
   } catch (error) {
