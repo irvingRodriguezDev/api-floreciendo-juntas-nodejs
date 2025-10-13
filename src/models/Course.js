@@ -26,10 +26,6 @@ const Course = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
-    coverImage: {
-      type: DataTypes.STRING,
-      allowNull: true, // URL o S3
-    },
     level: {
       type: DataTypes.ENUM("principiante", "intermedio", "avanzado"),
       allowNull: false,
@@ -75,13 +71,18 @@ Course.associate = (models) => {
     as: "system",
   });
 
+  Course.hasMany(models.ImageCourses, {
+    foreignKey: "courseId",
+    as: "images",
+    onDelete: "CASCADE",
+  });
   Course.hasOne(models.CourseVideo, {
     foreignKey: "courseId",
     as: "video",
     onDelete: "CASCADE",
   });
 
-  Course.hasMany(models.Review, {
+  Course.hasMany(models.Reviews, {
     foreignKey: "courseId",
     as: "reviews",
     onDelete: "CASCADE",

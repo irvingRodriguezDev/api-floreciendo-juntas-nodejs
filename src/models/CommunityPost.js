@@ -32,17 +32,11 @@ const CommunityPost = sequelize.define(
 CommunityPost.associate = (models) => {
   CommunityPost.belongsTo(models.User, {
     foreignKey: "userId",
-    as: "user",
+    as: "author",
     onDelete: "CASCADE",
   });
 
-  CommunityPost.belongsTo(models.Course, {
-    foreignKey: "courseId",
-    as: "course",
-    onDelete: "CASCADE",
-  });
-
-  CommunityPost.hasMany(models.CommunityComment, {
+  CommunityPost.hasMany(models.CommunityComent, {
     foreignKey: "postId",
     as: "comments",
     onDelete: "CASCADE",

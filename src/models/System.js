@@ -12,7 +12,14 @@ const System = sequelize.define(
     name: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      unique: true,
+    },
+    description: {
+      type: DataTypes.STRING(256),
+      allowNull: false,
+    },
+    icon: {
+      type: DataTypes.STRING(256),
+      allowNull: true,
     },
   },
   {

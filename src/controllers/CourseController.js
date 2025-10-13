@@ -1,19 +1,14 @@
-const { Course, System } = require("../models");
+const { Course, System, ImageCourses } = require("../models");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
+const deleteFromS3 = require("../helpers/deleteFromS3");
+
+//funcion para crear el curso
 const createCourse = async (req, res) => {
   try {
-    const {
-      title,
-      description,
-      level,
-      thumbnailUrl,
-      hasCertificate,
-      system_id, // 👈 nuevo campo
-    } = req.body;
+    const { title, description, level, hasCertificate, system_id } = req.body;
 
-    // Validar campos obligatorios
     if (!title || !description || !system_id) {
       return res.status(400).json({
         message:
@@ -21,7 +16,6 @@ const createCourse = async (req, res) => {
       });
     }
 
-    // Verificar que el sistema exista
     const system = await System.findByPk(system_id);
     if (!system) {
       return res
@@ -29,34 +23,58 @@ const createCourse = async (req, res) => {
         .json({ message: "El sistema especificado no existe" });
     }
 
-    // Generar el slug
     const slug = slugify(title, { lower: true, strict: true });
 
-    // Subir imagen usando el id del curso
-
-    // Crear el curso
     const course = await Course.create({
       title,
       slug,
       description,
       level,
-      thumbnailUrl,
       hasCertificate,
       system_id,
     });
 
-    // Subir imagen usando el id del curso
+    // Subir imagen si se envía
     if (req.file) {
-      const coverImagePath = await uploadToS3("courses", req.file, course.id);
-      course.coverImage = coverImagePath;
-      await course.save();
+      // 1️⃣ Crear registro de imagen vacío para obtener id
+      const imageRecord = await ImageCourses.create({
+        courseId: course.id,
+        s3_key: "",
+        is_active: true,
+      });
+
+      // 2️⃣ Subir a S3 usando el id del registro
+      const imageKey = await uploadToS3("courses", req.file, imageRecord.id);
+
+      // 3️⃣ Actualizar el registro con la key real
+      await imageRecord.update({ s3_key: imageKey });
     }
+
+    // Traer curso con imagen activa
+    const createdCourse = await Course.findByPk(course.id, {
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+      ],
+    });
+
+    const formatted = {
+      ...createdCourse.toJSON(),
+      cover_image_url: createdCourse.images?.[0]
+        ? getS3Url(createdCourse.images[0].s3_key) + `?t=${Date.now()}`
+        : null,
+    };
+
     return res.status(201).json({
       message: "Curso creado correctamente",
-      course,
+      course: formatted,
     });
   } catch (error) {
-    console.error("Error al crear curso:", error);
+    console.error("❌ Error al crear curso:", error);
     return res.status(500).json({
       message: "Error al crear curso",
       error: error.message,
@@ -64,19 +82,29 @@ const createCourse = async (req, res) => {
   }
 };
 
-// Listar todos los cursos
 const getCourses = async (req, res) => {
   try {
-    const courses = await Course.findAll();
+    const courses = await Course.findAll({
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false, // si no hay imagen activa, igualmente trae el curso
+        },
+      ],
+    });
+
+    // Si quieres ver las imágenes correctamente
 
     const formatted = courses.map((c) => ({
       ...c.toJSON(),
-      cover_image_url: getS3Url(c.coverImage),
+      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
     }));
 
     res.json(formatted);
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error al obtener cursos:", error);
     res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
@@ -100,37 +128,65 @@ const getCourseById = async (req, res) => {
 };
 
 // Actualizar curso
+
 const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const course = await Course.findByPk(id);
+    // Buscar curso con todas sus imágenes
+    const course = await Course.findByPk(id, {
+      include: [{ model: ImageCourses, as: "images" }],
+    });
     if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
 
-    let coverImage = course.coverImage; // mantenemos la actual por defecto
-    const path = "courses";
-
+    // Subir nueva imagen si llega archivo
     if (req.file) {
-      // Si se sube una nueva imagen, la subimos al S3
-      const newImage = await uploadToS3(req.file, path);
-
-      // (Opcional) eliminar la imagen anterior si existe
-      if (course.coverImage) {
-        await deleteFromS3(course.coverImage); // <- si tienes esta función
+      // Desactivar imágenes actuales
+      if (course.images?.length > 0) {
+        for (const img of course.images) {
+          await img.update({ is_active: false });
+        }
       }
 
-      coverImage = newImage;
+      // Crear registro nuevo
+      const imageRecord = await ImageCourses.create({
+        courseId: course.id,
+        s3_key: "",
+        is_active: true,
+      });
+
+      // Subir a S3 usando el id del registro
+      const imageKey = await uploadToS3("courses", req.file, imageRecord.id);
+
+      // Actualizar el registro con la key real
+      await imageRecord.update({ s3_key: imageKey });
     }
 
-    // Actualizamos el curso
-    await course.update({
-      ...req.body,
-      coverImage, // asignamos la imagen actual o la nueva
+    // Actualizar otros campos del curso
+    await course.update(req.body);
+
+    // Traer curso actualizado con imagen activa
+    const updatedCourse = await Course.findByPk(id, {
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+      ],
     });
 
-    return res.json(course);
+    const formatted = {
+      ...updatedCourse.toJSON(),
+      cover_image_url: updatedCourse.images?.[0]
+        ? getS3Url(updatedCourse.images[0].s3_key)
+        : null,
+    };
+
+    return res.json(formatted);
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error al actualizar curso:", error);
     return res.status(500).json({ msg: "Error al actualizar curso" });
   }
 };

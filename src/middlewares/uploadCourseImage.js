@@ -11,7 +11,7 @@ const uploadToS3 = async (folder, file, id) => {
   const environment = process.env.NODE_ENV || "local";
 
   // Generar Key usando el id
-  const key = `${environment}/${folder}/${id}/cover${extension}`;
+  const key = `${environment}/${folder}/${id}`;
 
   const upload = new Upload({
     client: s3Client,

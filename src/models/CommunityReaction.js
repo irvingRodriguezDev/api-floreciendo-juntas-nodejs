@@ -70,7 +70,7 @@ CommunityReaction.associate = (models) => {
     onDelete: "CASCADE",
   });
 
-  CommunityReaction.belongsTo(models.CommunityComment, {
+  CommunityReaction.belongsTo(models.CommunityComent, {
     foreignKey: "commentId",
     as: "comment",
     onDelete: "CASCADE",
