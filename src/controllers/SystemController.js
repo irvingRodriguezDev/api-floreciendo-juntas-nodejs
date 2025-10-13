@@ -1,7 +1,7 @@
 const getS3Url = require("../helpers/getS3Url");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const { System } = require("../models");
-
+const deleteFromS3 = require("../helpers/deleteFromS3");
 // Obtener todos los sistemas
 const getSystems = async (req, res) => {
   try {
@@ -58,27 +58,46 @@ const updateSystem = async (req, res) => {
     const { name, description } = req.body;
 
     const system = await System.findByPk(id);
+
     if (!system) {
       return res.status(404).json({ message: "Sistema no encontrado" });
     }
-    let coverIcon = system.icon;
+
+    let coverIcon = system.icon; // mantenemos el icono actual
     const path = "systems";
+
+    // Si llega un nuevo archivo, eliminamos primero el anterior (si existe)
     if (req.file) {
-      const newIcon = await uploadToS3(req.file, path);
       if (system.icon) {
-        await deleteFromS3(system.icon);
+        try {
+          await deleteFromS3(system.icon);
+        } catch (err) {
+          console.error("Error al eliminar el icono anterior:", err);
+          // Opcional: puedes decidir si quieres abortar la actualización o continuar
+        }
       }
-      icon = newIcon;
+
+      // Subimos la nueva imagen
+      const newIconKey = await uploadToS3(path, req.file, id);
+      coverIcon = newIconKey;
     }
 
+    // Actualizamos los datos del sistema
     await system.update({
-      ...req.body,
-      coverIcon,
+      name,
+      description,
+      icon: coverIcon,
     });
+
+    // Obtenemos la URL pública del icono actual
+    const icon = coverIcon ? await getS3Url(coverIcon) : null;
 
     res.json({
       message: "El sistema se ha actualizado correctamente!",
-      system,
+      system: {
+        ...system.toJSON(),
+        icon,
+      },
     });
   } catch (error) {
     console.error("Error al actualizar el sistema:", error);
