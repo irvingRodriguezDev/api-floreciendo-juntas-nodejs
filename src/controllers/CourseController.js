@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const { Course, System, ImageCourses } = require("../models");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
@@ -108,7 +109,81 @@ const getCourses = async (req, res) => {
     res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
+const getCoursesPaginate = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = "" } = req.query;
 
+    // Determinar si estamos en modo búsqueda
+    const isSearchMode = search.trim() !== "";
+
+    // Base de la consulta
+    const queryOptions = {
+      where: {},
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    };
+
+    // =======================================================
+    // 🟢 A. MODO BÚSQUEDA
+    // =======================================================
+    if (isSearchMode) {
+      queryOptions.where = {
+        [Op.or]: [
+          { title: { [Op.like]: `%${search.trim()}%` } },
+          { description: { [Op.like]: `%${search.trim()}%` } },
+        ],
+      };
+
+      const courses = await Course.findAll(queryOptions);
+
+      const formatted = courses.map((c) => ({
+        ...c.toJSON(),
+        cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+      }));
+
+      return res.json({
+        totalItems: formatted.length,
+        courses: formatted,
+      });
+    }
+
+    // =======================================================
+    // 🟣 B. MODO PAGINADO
+    // =======================================================
+    const parsedLimit = parseInt(limit, 10) || 10;
+    const parsedPage = parseInt(page, 10) || 1;
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    queryOptions.limit = parsedLimit;
+    queryOptions.offset = offset;
+
+    const result = await Course.findAndCountAll(queryOptions);
+
+    const formatted = result.rows.map((c) => ({
+      ...c.toJSON(),
+      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+    }));
+
+    const totalPages = Math.ceil(result.count / parsedLimit);
+
+    return res.json({
+      totalItems: result.count,
+      totalPages,
+      currentPage: parsedPage,
+      courses: formatted,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener cursos:", error);
+    res.status(500).json({ msg: "Error al obtener los cursos" });
+  }
+};
 // Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
@@ -128,7 +203,6 @@ const getCourseById = async (req, res) => {
 };
 
 // Actualizar curso
-
 const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
@@ -213,4 +287,5 @@ module.exports = {
   getCourseById,
   updateCourse,
   deleteCourse,
+  getCoursesPaginate,
 };
