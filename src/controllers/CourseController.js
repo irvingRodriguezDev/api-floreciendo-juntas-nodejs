@@ -1,10 +1,9 @@
-const { Op } = require("sequelize");
 const { Course, System, ImageCourses } = require("../models");
+const { Op } = require("sequelize");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const deleteFromS3 = require("../helpers/deleteFromS3");
-
 //funcion para crear el curso
 const createCourse = async (req, res) => {
   try {
@@ -82,7 +81,6 @@ const createCourse = async (req, res) => {
     });
   }
 };
-
 const getCourses = async (req, res) => {
   try {
     const courses = await Course.findAll({
@@ -109,6 +107,32 @@ const getCourses = async (req, res) => {
     res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
+const getNewCourses = async (req, res) => {
+  try {
+    const courses = await Course.findAll({
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]], // 👈 Ordenar por los más recientes
+      limit: 10, // 👈 Solo los 10 más nuevos
+    });
+
+    const formatted = courses.map((c) => ({
+      ...c.toJSON(),
+      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+    }));
+
+    return res.json(formatted);
+  } catch (error) {
+    console.error("❌ Error al obtener cursos:", error);
+    res.status(500).json({ msg: "Error al obtener los cursos" });
+  }
+};
 const getCoursesPaginate = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = "" } = req.query;
@@ -130,9 +154,7 @@ const getCoursesPaginate = async (req, res) => {
       order: [["createdAt", "DESC"]],
     };
 
-    // =======================================================
     // 🟢 A. MODO BÚSQUEDA
-    // =======================================================
     if (isSearchMode) {
       queryOptions.where = {
         [Op.or]: [
@@ -153,10 +175,7 @@ const getCoursesPaginate = async (req, res) => {
         courses: formatted,
       });
     }
-
-    // =======================================================
-    // 🟣 B. MODO PAGINADO
-    // =======================================================
+    //paginacion
     const parsedLimit = parseInt(limit, 10) || 10;
     const parsedPage = parseInt(page, 10) || 1;
     const offset = (parsedPage - 1) * parsedLimit;
@@ -188,25 +207,48 @@ const getCoursesPaginate = async (req, res) => {
 const getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
-    const course = await Course.findByPk(id);
 
-    if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
-
-    res.json({
-      ...course.toJSON(),
-      cover_image_url: getS3Url(course.coverImage),
+    // ✅ Buscar curso con sus imágenes activas
+    const course = await Course.findByPk(id, {
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+      ],
     });
+
+    // ⚠️ Validar si existe
+    if (!course) {
+      return res.status(404).json({ msg: "Curso no encontrado" });
+    }
+
+    // ✅ Generar URL completa para las imágenes desde S3
+    const formattedCourse = {
+      ...course.toJSON(),
+      cover_image_url: course.images?.[0]
+        ? getS3Url(course.images[0].s3_key)
+        : null,
+      images: course.images?.map((img) => ({
+        ...img.toJSON(),
+        url: getS3Url(img.s3_key),
+      })),
+    };
+
+    return res.status(200).json(formattedCourse);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ msg: "Error al obtener el curso" });
+    console.error("❌ Error al obtener el curso:", error);
+    return res.status(500).json({
+      msg: "Error interno al obtener el curso",
+      error: error.message,
+    });
   }
 };
-
-// Actualizar curso
 const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
-
     // Buscar curso con todas sus imágenes
     const course = await Course.findByPk(id, {
       include: [{ model: ImageCourses, as: "images" }],
@@ -288,4 +330,5 @@ module.exports = {
   updateCourse,
   deleteCourse,
   getCoursesPaginate,
+  getNewCourses,
 };

@@ -31,7 +31,7 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 
 db.sequelize
-  .sync({ alter: true }) // ok para desarrollo
+  .sync({ alter: false }) // ok para desarrollo
   .then(async () => {
     console.log("Base de datos sincronizada");
     await seedData();
