@@ -14,50 +14,59 @@ const BUCKET_NAME = "floreciendo-videos-cursos";
 const generatePresignedUrl = async (req, res) => {
   const { fileName, fileType, courseId } = req.body;
 
+  // Validar campos requeridos
   if (!fileName || !fileType || !courseId) {
-    return res
-      .status(400)
-      .json({ message: "fileName, fileType y courseId son obligatorios" });
+    return res.status(400).json({
+      message: "fileName, fileType y courseId son obligatorios",
+    });
   }
 
   try {
-    // ⚙️ 1️⃣ Desactivar videos anteriores del mismo curso
+    // 1️⃣ Desactivar videos anteriores del mismo curso
     await CourseVideo.update({ is_active: false }, { where: { courseId } });
 
-    // ⚙️ 2️⃣ Crear nuevo registro en transacción
+    // 2️⃣ Crear un nuevo registro dentro de una transacción
     const newVideoRecord = await sequelize.transaction(async (t) => {
+      // Crear registro temporal
       const video = await CourseVideo.create(
         {
           courseId,
           s3Key: "TEMPORAL_KEY",
           status: "subiendo",
-          is_active: true, // Nuevo video activo
+          is_active: true, // Este será el nuevo video activo
         },
         { transaction: t }
       );
 
-      // Construir la S3 Key definitiva
-      const s3Key = `videos/${video.id}/${fileName}`;
+      // Construir la clave definitiva en S3
+      const s3Key = `videos/${video.id}/${Date.now()}-${fileName}`;
 
-      // Actualizar registro con la Key final
+      // Actualizar el registro con la clave real
       await video.update({ s3Key }, { transaction: t });
 
       return { id: video.id, s3Key };
     });
 
-    // Aquí iría la generación de la URL prefirmada (no la muestras pero la dejamos lista)
-    // const presignedUrl = await s3.getSignedUrlPromise('putObject', { ... });
+    // 3️⃣ Generar la URL prefirmada para subir el video
+    const command = new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: newVideoRecord.s3Key,
+      ContentType: fileType,
+    });
 
+    const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    // 4️⃣ Respuesta final
     return res.status(200).json({
       message:
         "Registro de video creado y URL prefirmada generada correctamente.",
       video: newVideoRecord,
-      // presignedUrl,
+      presignedUrl,
     });
   } catch (error) {
-    console.error("Error creando registro de video:", error);
+    console.error("Error generando presigned URL:", error);
     return res.status(500).json({
-      message: "Error interno al crear el registro del video.",
+      message: "Error interno al generar la URL prefirmada del video.",
       error: error.message,
     });
   }

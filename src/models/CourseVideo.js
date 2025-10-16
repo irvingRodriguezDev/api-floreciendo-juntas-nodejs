@@ -36,7 +36,6 @@ const CourseVideo = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
-    // ✅ Campo nuevo para control lógico de versiones
     is_active: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,

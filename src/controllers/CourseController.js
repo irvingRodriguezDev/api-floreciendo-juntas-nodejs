@@ -225,6 +225,12 @@ const getCourseById = async (req, res) => {
           where: { is_active: true },
           required: false,
         },
+        {
+          model: CourseVideo,
+          as: "video", // Asegúrate de usar el mismo alias definido en la asociación
+          where: { is_active: true },
+          required: true, // el curso puede no tener video aún
+        },
       ],
     });
 
@@ -239,6 +245,7 @@ const getCourseById = async (req, res) => {
       cover_image_url: course.images?.[0]
         ? getS3Url(course.images[0].s3_key)
         : null,
+      video_url: course.video?.cloudfrontUrl || null,
       images: course.images?.map((img) => ({
         ...img.toJSON(),
         url: getS3Url(img.s3_key),

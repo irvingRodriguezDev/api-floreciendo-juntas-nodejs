@@ -4,13 +4,17 @@ const db = require("./models");
 const seedData = require("./config/seed");
 const routes = require("./routes");
 const cors = require("cors");
-
+const { handleStripeWebhook } = require("./controllers/WebhookController");
 const app = express();
 
 // Middlewares
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
-
+app.post(
+  "/webhook/stripe",
+  express.raw({ type: "application/json" }), // Usa express.raw() para obtener el body sin parsear
+  handleStripeWebhook // Tu función handler
+);
 // CORS
 app.use(
   cors({

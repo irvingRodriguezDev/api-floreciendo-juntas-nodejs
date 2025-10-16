@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { User } = require("../models");
+const { User, Subscription } = require("../models");
 const stripe = require("../config/stripe");
 const { addToBlacklist } = require("../utils/tokenBlacklist");
 
@@ -100,17 +100,63 @@ const profile = async (req, res) => {
 
 const me = async (req, res) => {
   try {
+    // 1. Encontramos el usuario, seleccionando sus atributos básicos
     const user = await User.findByPk(req.user.id, {
-      attributes: ["id", "email", "name"],
+      attributes: ["id", "email", "name", "stripe_id"], // Mantenemos stripe_id por si acaso
+      // 2. Incluimos el modelo Subscription
+      include: [
+        {
+          model: Subscription,
+          as: "Subscriptions", // Si tienes un alias, úsalo aquí. Por defecto, puede ser 'Subscriptions'.
+          // Buscamos solo la suscripción activa
+          where: {
+            status: "active",
+          },
+          required: false, // Usamos LEFT JOIN (el usuario se trae aunque no tenga suscripción)
+          limit: 1, // Solo necesitamos el registro activo más reciente
+          order: [["end_date", "DESC"]], // Ordenar para obtener el más reciente/relevante
+        },
+      ],
     });
-    res.status(200).json({ user });
+
+    if (!user) {
+      return res.status(404).json({ msg: "Usuario no encontrado" });
+    }
+
+    // 3. Determinar el estado de la suscripción para el frontend
+    // Si la propiedad 'Subscriptions' (o el alias que uses) existe y tiene al menos 1 elemento
+    const activeSubscription =
+      user.Subscriptions && user.Subscriptions.length > 0
+        ? user.Subscriptions[0]
+        : null;
+
+    const isSubscribed = activeSubscription !== null;
+
+    // 4. Formatear y enviar la respuesta
+    res.status(200).json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isSubscribed: isSubscribed, // Boolean: true/false
+        // Puedes enviar los detalles de la suscripción activa si los necesitas en el front
+        subscriptionDetails: isSubscribed
+          ? {
+              type: activeSubscription.subscription_type,
+              status: activeSubscription.status,
+              endDate: activeSubscription.end_date,
+              nextRenewal: activeSubscription.next_renewal,
+            }
+          : null,
+      },
+    });
   } catch (error) {
+    console.error("Error en /auth/me:", error);
     res
       .status(500)
-      .json({ msg: "Error al obtener la informacion", error: error.message });
+      .json({ msg: "Error al obtener la información", error: error.message });
   }
 };
-
 //crear rol del admin
 const createUserWithRole = async (req, res) => {
   try {
