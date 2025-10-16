@@ -79,7 +79,6 @@ Course.associate = (models) => {
   Course.hasOne(models.CourseVideo, {
     foreignKey: "courseId",
     as: "video",
-    onDelete: "CASCADE",
   });
 
   Course.hasMany(models.Reviews, {

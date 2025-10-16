@@ -8,6 +8,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // Para presigned URL (frontend hace PUT directo a S3)
 router.post("/presigned-url", videoController.generatePresignedUrl);
+router.put("/update/:videoId", videoController.updateVideo);
 
 // Para subir desde backend (solo prueba o casos especiales)
 router.post(
@@ -15,7 +16,5 @@ router.post(
   upload.single("file"),
   videoController.uploadLargeVideo
 );
-
-router.put("/update", videoController.updateVideo);
 
 module.exports = router;

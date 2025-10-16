@@ -36,6 +36,11 @@ const CourseVideo = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    // ✅ Campo nuevo para control lógico de versiones
+    is_active: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
   },
   {
     tableName: "course_videos",
@@ -48,7 +53,6 @@ CourseVideo.associate = (models) => {
   CourseVideo.belongsTo(models.Course, {
     foreignKey: "courseId",
     as: "course",
-    onDelete: "CASCADE",
   });
 };
 

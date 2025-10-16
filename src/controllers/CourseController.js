@@ -1,5 +1,5 @@
-const { Course, System, ImageCourses } = require("../models");
-const { Op } = require("sequelize");
+const { Course, System, ImageCourses, CourseVideo } = require("../models");
+const { Op, json } = require("sequelize");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
@@ -137,10 +137,8 @@ const getCoursesPaginate = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = "" } = req.query;
 
-    // Determinar si estamos en modo búsqueda
     const isSearchMode = search.trim() !== "";
 
-    // Base de la consulta
     const queryOptions = {
       where: {},
       include: [
@@ -150,11 +148,17 @@ const getCoursesPaginate = async (req, res) => {
           where: { is_active: true },
           required: false,
         },
+        {
+          model: CourseVideo,
+          as: "video", // Asegúrate de usar el mismo alias definido en la asociación
+          where: { is_active: true },
+          required: true, // el curso puede no tener video aún
+        },
       ],
       order: [["createdAt", "DESC"]],
     };
 
-    // 🟢 A. MODO BÚSQUEDA
+    // 🟢 MODO BÚSQUEDA
     if (isSearchMode) {
       queryOptions.where = {
         [Op.or]: [
@@ -168,6 +172,7 @@ const getCoursesPaginate = async (req, res) => {
       const formatted = courses.map((c) => ({
         ...c.toJSON(),
         cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+        video_url: c.video?.cloudfrontUrl || null, // 👈 URL del video activo
       }));
 
       return res.json({
@@ -175,7 +180,8 @@ const getCoursesPaginate = async (req, res) => {
         courses: formatted,
       });
     }
-    //paginacion
+
+    // 🟡 PAGINACIÓN
     const parsedLimit = parseInt(limit, 10) || 10;
     const parsedPage = parseInt(page, 10) || 1;
     const offset = (parsedPage - 1) * parsedLimit;
@@ -188,6 +194,7 @@ const getCoursesPaginate = async (req, res) => {
     const formatted = result.rows.map((c) => ({
       ...c.toJSON(),
       cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+      video_url: c.video?.cloudfrontUrl || null, // 👈 Agregamos el video activo
     }));
 
     const totalPages = Math.ceil(result.count / parsedLimit);
@@ -203,6 +210,7 @@ const getCoursesPaginate = async (req, res) => {
     res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
+
 // Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
