@@ -3,7 +3,9 @@ const jwt = require("jsonwebtoken");
 const { User, Subscription } = require("../models");
 const stripe = require("../config/stripe");
 const { addToBlacklist } = require("../utils/tokenBlacklist");
-
+const { uploadToS3 } = require("../middlewares/uploadCourseImage");
+const getS3Url = require("../helpers/getS3Url");
+const { validationResult } = require("express-validator");
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -249,6 +251,50 @@ const resetPassword = async (req, res) => {
     res.status(500).json({ message: "Error interno del servidor." });
   }
 };
+//funcion para cargar la imagen de perfil
+const uploadProfileImage = async (req, res) => {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  if (!req.file) {
+    return res
+      .status(400)
+      .json({ msg: "No se ha proporcionado ningún archivo." });
+  }
+
+  try {
+    const userId = req.user.id;
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({ msg: "Usuario no encontrado." });
+    }
+
+    // Subir el archivo a S3
+    const file = req.file;
+    const s3Key = await uploadToS3("profileImages", file, userId);
+
+    // Guardar la referencia en el modelo User
+    user.profileImage = s3Key;
+    await user.save();
+
+    // Obtener la URL pública usando getS3Url
+    const publicUrl = getS3Url(user.profileImage);
+
+    res.json({
+      msg: "Imagen de perfil subida exitosamente",
+      profileImage: publicUrl,
+      user, // opcional: enviar datos del usuario actualizados
+    });
+  } catch (err) {
+    console.error("Error al subir la imagen:", err.message);
+    res.status(500).send("Error del servidor");
+  }
+};
 
 module.exports = {
   register,
@@ -258,4 +304,5 @@ module.exports = {
   me,
   logout,
   resetPassword,
+  uploadProfileImage,
 };

@@ -36,6 +36,10 @@ const User = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: false,
     },
+    profileImage: {
+      type: DataTypes.STRING,
+      allowNull: true, // Es opcional
+    },
     stripe_id: {
       type: DataTypes.STRING,
       allowNull: true,
