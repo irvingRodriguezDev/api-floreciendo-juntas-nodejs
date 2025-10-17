@@ -61,12 +61,12 @@ const createPayment = async (req, res) => {
       subscription_type: subscriptionType,
       price_id: priceId,
       userId: userId,
-      status: "pending", // Nuevo estado que debes añadir al ENUM de tu modelo
+      status: "trialing", // Nuevo estado que debes añadir al ENUM de tu modelo
       // Los campos como start_date, end_date, etc., se llenan en el Webhook
     });
 
     // 6. Devolver la respuesta al frontend
-    res.json({ id: session.id });
+    res.status(200).json({ id: session.id, url: session.url });
   } catch (error) {
     console.error("Error creando pago:", error);
     res.status(500).json({ msg: "Error creando pago", error: error.message });

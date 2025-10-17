@@ -12,10 +12,10 @@ const BUCKET_NAME = "floreciendo-videos-cursos";
  * el registro en la DB para obtener el ID de seguimiento.
  */
 const generatePresignedUrl = async (req, res) => {
-  const { fileName, fileType, courseId } = req.body;
+  const { fileName, fileType, courseId, durationSeconds } = req.body;
 
   // Validar campos requeridos
-  if (!fileName || !fileType || !courseId) {
+  if (!fileName || !fileType || !courseId || !durationSeconds) {
     return res.status(400).json({
       message: "fileName, fileType y courseId son obligatorios",
     });
@@ -34,6 +34,7 @@ const generatePresignedUrl = async (req, res) => {
           s3Key: "TEMPORAL_KEY",
           status: "subiendo",
           is_active: true, // Este será el nuevo video activo
+          durationSeconds: durationSeconds,
         },
         { transaction: t }
       );
@@ -135,13 +136,13 @@ const updateVideo = async (req, res) => {
 
     await video.update(updatePayload);
 
-    return json({ message: "El video se ha actualizado correctamente" }).status(
-      200
-    );
+    return res
+      .json({ message: "El video se ha actualizado correctamente" })
+      .status(200);
   } catch (error) {
-    return json({ error: "Ocurrio un error al actualizar el video" }).status(
-      500
-    );
+    return res
+      .json({ error: "Ocurrio un error al actualizar el video" })
+      .status(500);
   }
 };
 

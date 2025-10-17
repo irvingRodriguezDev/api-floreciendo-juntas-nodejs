@@ -1,33 +1,39 @@
+process.env.TZ = "America/Mexico_City";
 require("dotenv").config();
 const express = require("express");
 const db = require("./models");
 const seedData = require("./config/seed");
 const routes = require("./routes");
 const cors = require("cors");
-const { handleStripeWebhook } = require("./controllers/WebhookController");
+const webhookController = require("./controllers/WebhookController");
+const bodyParser = require("body-parser");
+const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
 const app = express();
 
-// Middlewares
-app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ extended: true }));
+// 🧠 PRIMERO el Webhook (usa raw body)
 app.post(
   "/webhook/stripe",
-  express.raw({ type: "application/json" }), // Usa express.raw() para obtener el body sin parsear
-  handleStripeWebhook // Tu función handler
+  bodyParser.raw({ type: "application/json" }),
+  webhookController.handleStripeWebhook
 );
+
+// 👇 AHORA sí, los parsers normales
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true }));
+
 // CORS
 app.use(
   cors({
-    origin: "*", // en producción reemplazar con tu dominio
+    origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: false, // cambiar a true solo con un origen específico
+    credentials: false,
   })
 );
 
-// Rutas
+// Rutas API
 app.use("/api", routes);
 
-// Middleware para rutas no encontradas
+// Middleware 404
 app.use((req, res) => {
   res.status(404).json({ msg: "Ruta no encontrada" });
 });
@@ -35,10 +41,12 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 
 db.sequelize
-  .sync({ alter: false }) // ok para desarrollo
+  .sync({ alter: false })
   .then(async () => {
     console.log("Base de datos sincronizada");
     await seedData();
+    // ✅ Iniciar cron job
+    expireSubscriptionsJob.start();
     app.listen(PORT, () =>
       console.log(`Servidor corriendo en http://0.0.0.0:${PORT}`)
     );

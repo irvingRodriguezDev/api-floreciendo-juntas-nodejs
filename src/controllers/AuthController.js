@@ -78,9 +78,9 @@ const login = async (req, res) => {
       expiresIn: "1h",
     });
 
-    res.json({ msg: "Login exitoso", token });
+    res.json({ msg: "Login exitoso", token, user });
   } catch (error) {
-    res.status(500).json({ msg: "Error en login", error: error.message });
+    res.status(500).json({ message: "Error en login", error: error.message });
   }
 };
 

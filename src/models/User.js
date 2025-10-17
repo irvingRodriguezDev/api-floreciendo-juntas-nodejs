@@ -48,6 +48,15 @@ const User = sequelize.define(
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
     },
+    isSubscribed: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false, // Por defecto, ningún usuario está suscrito
+      allowNull: false,
+    },
+    stripeSubscriptionId: {
+      type: DataTypes.STRING,
+      allowNull: true, // Almacena el ID de la suscripción de Stripe (sub_...)
+    },
   },
   {
     tableName: "Users",

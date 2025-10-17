@@ -20,7 +20,7 @@ const CourseVideo = sequelize.define(
       allowNull: false,
     },
     durationSeconds: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
     },
     sizeBytes: {

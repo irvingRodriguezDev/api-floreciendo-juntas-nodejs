@@ -48,6 +48,7 @@ const Subscription = sequelize.define(
     // Estado de la suscripción, refleja los estados de Stripe
     status: {
       type: DataTypes.ENUM(
+        "pending",
         "active",
         "trialing",
         "past_due",
@@ -55,7 +56,7 @@ const Subscription = sequelize.define(
         "canceled",
         "expired"
       ),
-      defaultValue: "active",
+      defaultValue: "pending",
       allowNull: false,
     },
     // El ID del Price (plan) que se compró
