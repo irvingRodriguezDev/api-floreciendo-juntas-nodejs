@@ -1,9 +1,16 @@
-const { Course, System, ImageCourses, CourseVideo } = require("../models");
+const {
+  Course,
+  System,
+  ImageCourses,
+  CourseVideo,
+  CourseProgress,
+} = require("../models");
 const { Op, json } = require("sequelize");
 const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const deleteFromS3 = require("../helpers/deleteFromS3");
+const Sequelize = require("sequelize");
 //funcion para crear el curso
 const createCourse = async (req, res) => {
   try {
@@ -109,28 +116,69 @@ const getCourses = async (req, res) => {
 };
 const getNewCourses = async (req, res) => {
   try {
+    const { userId } = req.query;
+
+    // 🔹 Inclusiones base: imágenes activas
+    const includes = [
+      {
+        model: ImageCourses,
+        as: "images",
+        where: { is_active: true },
+        required: false, // LEFT JOIN: incluso si no tiene imágenes
+        attributes: ["id", "s3_key"],
+      },
+    ];
+
+    // 🔹 Si hay usuario autenticado, incluir progreso del curso
+    if (userId) {
+      includes.push({
+        model: CourseProgress,
+        as: "progresses",
+        where: { userId: Number(userId) },
+        required: false, // LEFT JOIN para que salgan todos los cursos
+        attributes: ["percent"], // solo necesitamos el porcentaje
+      });
+    }
+
+    // 🔹 Obtener los cursos más recientes
     const courses = await Course.findAll({
-      include: [
-        {
-          model: ImageCourses,
-          as: "images",
-          where: { is_active: true },
-          required: false,
-        },
-      ],
-      order: [["createdAt", "DESC"]], // 👈 Ordenar por los más recientes
-      limit: 10, // 👈 Solo los 10 más nuevos
+      include: includes,
+      order: [["createdAt", "DESC"]],
+      limit: 10,
+      attributes: ["id", "title", "description", "createdAt"],
     });
 
-    const formatted = courses.map((c) => ({
-      ...c.toJSON(),
-      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
-    }));
+    // 🔹 Transformar resultados
+    const formattedCourses = courses.map((course) => {
+      const data = course.toJSON();
 
-    return res.json(formatted);
+      // Imagen de portada (solo la primera activa)
+      const coverImageUrl = data.images?.[0]
+        ? getS3Url(data.images[0].s3_key)
+        : null;
+
+      // Progreso del usuario (si existe)
+      const userProgress =
+        userId && data.progresses?.length > 0
+          ? Number(data.progresses[0].percent)
+          : 0;
+
+      return {
+        id: data.id,
+        title: data.title,
+        description: data.description,
+        createdAt: data.createdAt,
+        cover_image_url: coverImageUrl,
+        user_progress_percentage: userProgress,
+      };
+    });
+
+    return res.status(200).json(formattedCourses);
   } catch (error) {
     console.error("❌ Error al obtener cursos:", error);
-    res.status(500).json({ msg: "Error al obtener los cursos" });
+    return res
+      .status(500)
+      .json({ msg: "Error al obtener los cursos más recientes" });
   }
 };
 const getCoursesPaginate = async (req, res) => {
@@ -297,6 +345,48 @@ const getCoursesBySystem = async (req, res) => {
       .json({ msg: "Error al obtener los cursos", error: error.message });
   }
 };
+//topcursos
+const getTopViewedCourses = async (req, res) => {
+  try {
+    const topCourses = await CourseProgress.findAll({
+      attributes: [
+        "courseId",
+        [Sequelize.fn("COUNT", Sequelize.col("userId")), "viewsCount"],
+      ],
+      group: ["courseId"],
+      order: [[Sequelize.literal("viewsCount"), "DESC"]],
+      limit: 10,
+      include: [
+        {
+          model: Course,
+          as: "course",
+          attributes: ["title", "description"],
+          include: [
+            {
+              model: ImageCourses,
+              as: "images",
+              attributes: ["s3_key"], // o cualquier columna que tengas para la imagen
+              where: { is_active: true }, // opcional si solo quieres imágenes activas
+              required: false, // si no quieres que filtre los cursos sin imagen
+            },
+          ],
+        },
+      ],
+    });
+    // return res.json(topCourses);
+    const formatted = topCourses.map((c) => ({
+      ...c.toJSON(),
+      cover_image_url: c.course ? getS3Url(c.course.images[0].s3_key) : null,
+      title: c.course ? c.course.title : null,
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error al obtener top cursos más vistos" });
+  }
+};
+
 // Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
@@ -432,4 +522,5 @@ module.exports = {
   getCoursesPaginate,
   getNewCourses,
   getCoursesBySystem,
+  getTopViewedCourses,
 };

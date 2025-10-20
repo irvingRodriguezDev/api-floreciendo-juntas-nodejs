@@ -10,6 +10,7 @@ router.get("/", courseController.getCourses);
 router.get("/lastAdded", courseController.getNewCourses);
 router.get("/paginate", courseController.getCoursesPaginate);
 router.get("/bySystem", courseController.getCoursesBySystem);
+router.get("/top-viewed-courses", courseController.getTopViewedCourses);
 router.get("/:id", courseController.getCourseById);
 router.put("/:id", upload.single("coverImage"), courseController.updateCourse);
 router.delete("/:id", courseController.deleteCourse);
