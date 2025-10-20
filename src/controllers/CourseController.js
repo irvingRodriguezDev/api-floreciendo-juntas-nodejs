@@ -210,7 +210,93 @@ const getCoursesPaginate = async (req, res) => {
     res.status(500).json({ msg: "Error al obtener los cursos" });
   }
 };
+const getCoursesBySystem = async (req, res) => {
+  try {
+    const { system_id, page = 1, limit = 10, search = "" } = req.query;
 
+    if (!system_id) {
+      return res
+        .status(400)
+        .json({ msg: "El campo 'system_id' es obligatorio." });
+    }
+
+    const isSearchMode = search.trim() !== "";
+
+    // ⚙️ Configuración base de consulta
+    const queryOptions = {
+      where: { system_id },
+      include: [
+        {
+          model: ImageCourses,
+          as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+        {
+          model: CourseVideo,
+          as: "video",
+          where: { is_active: true },
+          required: false, // 👈 para que también se muestren los cursos sin video
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    };
+
+    // 🟢 Si hay búsqueda, la agregamos sin perder el filtro por sistema
+    if (isSearchMode) {
+      queryOptions.where = {
+        system_id,
+        [Op.or]: [
+          { title: { [Op.like]: `%${search.trim()}%` } },
+          { description: { [Op.like]: `%${search.trim()}%` } },
+        ],
+      };
+
+      const courses = await Course.findAll(queryOptions);
+
+      const formatted = courses.map((c) => ({
+        ...c.toJSON(),
+        cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+        video_url: c.video?.cloudfrontUrl || null,
+      }));
+
+      return res.json({
+        totalItems: formatted.length,
+        totalPages: 1,
+        currentPage: 1,
+        courses: formatted,
+      });
+    }
+
+    // 🟡 Modo paginación normal
+    const parsedLimit = parseInt(limit, 10) || 10;
+    const parsedPage = parseInt(page, 10) || 1;
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    queryOptions.limit = parsedLimit;
+    queryOptions.offset = offset;
+
+    const result = await Course.findAndCountAll(queryOptions);
+
+    const formatted = result.rows.map((c) => ({
+      ...c.toJSON(),
+      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+      video_url: c.video?.cloudfrontUrl || null,
+    }));
+
+    return res.json({
+      totalItems: result.count,
+      totalPages: Math.ceil(result.count / parsedLimit),
+      currentPage: parsedPage,
+      courses: formatted,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener cursos:", error);
+    res
+      .status(500)
+      .json({ msg: "Error al obtener los cursos", error: error.message });
+  }
+};
 // Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
@@ -321,7 +407,6 @@ const updateCourse = async (req, res) => {
     return res.status(500).json({ msg: "Error al actualizar curso" });
   }
 };
-
 // Eliminar curso
 const deleteCourse = async (req, res) => {
   try {
@@ -346,4 +431,5 @@ module.exports = {
   deleteCourse,
   getCoursesPaginate,
   getNewCourses,
+  getCoursesBySystem,
 };

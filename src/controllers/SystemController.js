@@ -18,6 +18,22 @@ const getSystems = async (req, res) => {
   }
 };
 
+const showSystem = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const system = await System.findByPk(id);
+    if (!system) {
+      return res.status(400).json({ message: "Sistema no encontrado" });
+    }
+    return res.status(200).json(system);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Error al obtener el sistema",
+      error: error.message,
+    });
+  }
+};
+
 // Crear un nuevo sistema
 const createSystem = async (req, res) => {
   try {
@@ -123,4 +139,10 @@ const deleteSystem = async (req, res) => {
   }
 };
 
-module.exports = { getSystems, createSystem, updateSystem, deleteSystem };
+module.exports = {
+  getSystems,
+  createSystem,
+  updateSystem,
+  deleteSystem,
+  showSystem,
+};
