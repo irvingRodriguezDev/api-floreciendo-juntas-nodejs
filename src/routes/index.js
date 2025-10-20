@@ -9,6 +9,8 @@ const courseVideoRoutes = require("./CourseVideoRoutes");
 const systemRoutes = require("./SystemRoutes");
 const videoRoutes = require("./VideosRoutes");
 const CommunityRoutes = require("./CommunityRoutes");
+const CertificateRoutes = require("./CertificateRoutes");
+const ProgressCourseRoutes = require("./ProgressCourseRoutes");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -17,5 +19,7 @@ router.use("/course-video", courseVideoRoutes);
 router.use("/systems", systemRoutes);
 router.use("/videos", videoRoutes);
 router.use("/posts", CommunityRoutes);
+router.use("/certificate", CertificateRoutes);
+router.use("/progress-video", ProgressCourseRoutes);
 
 module.exports = router;

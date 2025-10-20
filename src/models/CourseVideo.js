@@ -13,7 +13,6 @@ const CourseVideo = sequelize.define(
     courseId: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      unique: true, // relación 1:1 con Course
     },
     s3Key: {
       type: DataTypes.STRING,
