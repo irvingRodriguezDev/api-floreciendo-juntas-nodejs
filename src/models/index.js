@@ -10,9 +10,9 @@ const CourseVideo = require("./CourseVideo");
 const ImageCourses = require("./ImageCourses");
 const Reviews = require("./Reviews");
 const CommunityPost = require("./CommunityPost");
-const CommunityComent = require("./CommunityComent");
 const CommunityReaction = require("./CommunityReaction");
 const CourseProgress = require("./CourseProgress");
+const CommunityComment = require("./CommunityComment");
 
 // Registrar modelos en el objeto db
 const db = {
@@ -27,7 +27,7 @@ const db = {
   Reviews,
   CommunityPost,
   CourseProgress,
-  CommunityComent,
+  CommunityComment,
   CommunityReaction,
 };
 

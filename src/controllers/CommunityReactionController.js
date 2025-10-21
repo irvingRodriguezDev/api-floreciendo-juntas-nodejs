@@ -2,11 +2,10 @@ const {
   CommunityReaction,
   CommunityPost,
   CommunityComment,
-  sequelize,
 } = require("../models");
-
+const sequelize = require("../config/db");
+const { Op, fn, col } = require("sequelize");
 const toggleReaction = async (req, res) => {
-  // Expect body: { postId?, commentId?, type }
   const t = await sequelize.transaction();
   try {
     const userId = req.user.id;
@@ -20,7 +19,7 @@ const toggleReaction = async (req, res) => {
         .status(400)
         .json({ message: "Solo postId o commentId, no ambos" });
 
-    // Verificar objetivo
+    // Verificar existencia del objetivo
     if (postId) {
       const post = await CommunityPost.findByPk(postId);
       if (!post) return res.status(404).json({ message: "Post no encontrado" });
@@ -30,19 +29,17 @@ const toggleReaction = async (req, res) => {
         return res.status(404).json({ message: "Comentario no encontrado" });
     }
 
-    // Checar si ya existe la reacción del mismo tipo del mismo usuario
+    // Buscar si ya existe una reacción igual
     const where = { userId, type, postId, commentId };
     const existing = await CommunityReaction.findOne({ where });
 
     if (existing) {
-      // Si ya existe -> eliminar (toggle off)
       await existing.destroy({ transaction: t });
       await t.commit();
       return res.json({ action: "removed", message: "Reacción removida" });
     } else {
-      // Crear nueva reacción
       await CommunityReaction.create(
-        { userId, postId, commentId, type },
+        { userId, type, postId, commentId },
         { transaction: t }
       );
       await t.commit();
@@ -52,28 +49,32 @@ const toggleReaction = async (req, res) => {
     }
   } catch (err) {
     await t.rollback();
-    // manejo de unique constraint (por si hay carrera)
     if (err.name === "SequelizeUniqueConstraintError") {
       return res.status(409).json({ message: "Ya reaccionaste con ese tipo" });
     }
     console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error al togglear reacción", error: err.message });
+    return res.status(500).json({
+      message: "Error al togglear reacción",
+      error: err.message,
+    });
   }
 };
 
-const getReactionsSummaryForPost = async (req, res) => {
+const getReactionsSummary = async (req, res) => {
   try {
-    const { postId } = req.params;
-    if (!postId) return res.status(400).json({ message: "postId requerido" });
+    const { postId = null, commentId = null } = req.query;
+
+    if (!postId && !commentId) {
+      return res
+        .status(400)
+        .json({ message: "Se requiere postId o commentId" });
+    }
+
+    const where = postId ? { postId } : { commentId };
 
     const reactions = await CommunityReaction.findAll({
-      where: { postId },
-      attributes: [
-        "type",
-        [sequelize.fn("COUNT", sequelize.col("type")), "count"],
-      ],
+      where,
+      attributes: ["type", [fn("COUNT", col("type")), "count"]],
       group: ["type"],
     });
 
@@ -82,7 +83,11 @@ const getReactionsSummaryForPost = async (req, res) => {
       summary[r.type] = parseInt(r.get("count"), 10);
     });
 
-    return res.json({ postId, summary });
+    return res.json({
+      ...(postId && { postId }),
+      ...(commentId && { commentId }),
+      summary,
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({
@@ -94,5 +99,5 @@ const getReactionsSummaryForPost = async (req, res) => {
 
 module.exports = {
   toggleReaction,
-  getReactionsSummaryForPost,
+  getReactionsSummary,
 };

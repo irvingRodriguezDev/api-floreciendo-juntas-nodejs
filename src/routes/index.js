@@ -20,6 +20,6 @@ router.use("/systems", systemRoutes);
 router.use("/videos", videoRoutes);
 router.use("/certificate", CertificateRoutes);
 router.use("/progress-video", ProgressCourseRoutes);
-router.use("/communtiy", CommunityRoutes);
+router.use("/community", CommunityRoutes);
 
 module.exports = router;

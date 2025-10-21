@@ -1,11 +1,11 @@
-// models/CommunityPost.js
+// models/CommunityComment.js
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
-const CommunityPost = sequelize.define(
-  "CommunityPost",
+const CommunityComment = sequelize.define(
+  "CommunityComment",
   {
-    courseId: {
+    postId: {
       type: DataTypes.INTEGER,
       allowNull: false,
     },
@@ -18,35 +18,35 @@ const CommunityPost = sequelize.define(
       allowNull: false,
     },
     attachments: {
-      type: DataTypes.JSON, // puedes guardar URLs de imágenes o archivos S3
+      type: DataTypes.JSON, // puedes guardar URLs de imágenes o archivos subidos a S3
       allowNull: true,
     },
   },
   {
-    tableName: "community_posts",
+    tableName: "community_comments",
     timestamps: true,
   }
 );
 
 // 🔗 Asociaciones
-CommunityPost.associate = (models) => {
-  CommunityPost.belongsTo(models.User, {
+CommunityComment.associate = (models) => {
+  CommunityComment.belongsTo(models.User, {
     foreignKey: "userId",
-    as: "author",
+    as: "user",
     onDelete: "CASCADE",
   });
 
-  CommunityPost.hasMany(models.CommunityComment, {
+  CommunityComment.belongsTo(models.CommunityPost, {
     foreignKey: "postId",
-    as: "comments",
+    as: "post",
     onDelete: "CASCADE",
   });
 
-  CommunityPost.hasMany(models.CommunityReaction, {
-    foreignKey: "postId",
+  CommunityComment.hasMany(models.CommunityReaction, {
+    foreignKey: "commentId",
     as: "reactions",
     onDelete: "CASCADE",
   });
 };
 
-module.exports = CommunityPost;
+module.exports = CommunityComment;

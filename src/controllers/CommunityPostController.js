@@ -3,12 +3,11 @@ const {
   CommunityComment,
   CommunityReaction,
   User,
-  sequelize,
 } = require("../models");
+const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-
 const createPost = async (req, res) => {
-  const t = await sequelize.transaction();
+  const t = await sequelize.transaction(); // ✅ corrección
   try {
     const userId = req.user.id;
     const { courseId, content } = req.body;
@@ -18,7 +17,6 @@ const createPost = async (req, res) => {
     if (!content || !content.trim())
       return res.status(400).json({ message: "content es requerido" });
 
-    // manejar attachments si vienen (req.files)
     let attachments = null;
     if (req.files && req.files.length) {
       const urls = await uploadToS3(req.files);
@@ -29,16 +27,21 @@ const createPost = async (req, res) => {
       { courseId, userId, content, attachments },
       { transaction: t }
     );
+
     await t.commit();
 
-    // devolver con autor vacío (puedes incluir author)
-    const postWithAuthor = await CommunityPost.findByPk(post.id, {
+    // incluir autor
+    await post.reload({
       include: [
-        { model: User, as: "author", attributes: ["id", "name", "avatar_url"] },
+        {
+          model: User,
+          as: "author",
+          attributes: ["id", "name", "profileImage"],
+        },
       ],
     });
 
-    return res.status(201).json(postWithAuthor);
+    return res.status(201).json(post);
   } catch (err) {
     await t.rollback();
     console.error(err);
@@ -61,12 +64,16 @@ const getPostsByCourse = async (req, res) => {
     const { count, rows } = await CommunityPost.findAndCountAll({
       where: { courseId },
       include: [
-        { model: User, as: "author", attributes: ["id", "name", "avatar_url"] },
-        // incluir conteos o primeros comentarios si quieres
+        {
+          model: User,
+          as: "author",
+          attributes: ["id", "name", "profileImage"],
+        },
         {
           model: CommunityComment,
           as: "comments",
           attributes: ["id", "content", "userId", "createdAt"],
+          separate: true, // ✅ importante
           limit: 2,
           order: [["createdAt", "DESC"]],
         },
@@ -81,7 +88,7 @@ const getPostsByCourse = async (req, res) => {
       offset,
     });
 
-    // Agregar resumen de reacciones por post (map)
+    // Agregar resumen de reacciones por post
     const posts = rows.map((p) => {
       const reactions = p.reactions || [];
       const summary = reactions.reduce((acc, r) => {
@@ -93,7 +100,7 @@ const getPostsByCourse = async (req, res) => {
       return {
         ...p.toJSON(),
         reactionsSummary: summary,
-        reactions: undefined, // ya resumido
+        reactions: undefined,
       };
     });
 

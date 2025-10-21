@@ -3,8 +3,8 @@ const {
   CommunityPost,
   CommunityReaction,
   User,
-  sequelize,
 } = require("../models");
+const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 
 const createComment = async (req, res) => {
@@ -30,15 +30,17 @@ const createComment = async (req, res) => {
       { postId, userId, content, attachments },
       { transaction: t }
     );
+
     await t.commit();
 
-    const commentWithUser = await CommunityComment.findByPk(comment.id, {
+    // incluir usuario
+    await comment.reload({
       include: [
-        { model: User, as: "user", attributes: ["id", "name", "avatar_url"] },
+        { model: User, as: "user", attributes: ["id", "name", "profileImage"] },
       ],
     });
 
-    return res.status(201).json(commentWithUser);
+    return res.status(201).json(comment);
   } catch (err) {
     await t.rollback();
     console.error(err);
@@ -60,7 +62,7 @@ const getCommentsByPost = async (req, res) => {
     const { count, rows } = await CommunityComment.findAndCountAll({
       where: { postId },
       include: [
-        { model: User, as: "user", attributes: ["id", "name", "avatar_url"] },
+        { model: User, as: "user", attributes: ["id", "name", "profileImage"] },
       ],
       order: [["createdAt", "ASC"]],
       limit,

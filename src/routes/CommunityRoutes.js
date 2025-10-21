@@ -37,9 +37,6 @@ router.delete("/comments/:id", AuthMiddleware, CommentCtrl.deleteComment);
 
 // REACTIONS
 router.post("/reactions/toggle", AuthMiddleware, ReactionCtrl.toggleReaction);
-router.get(
-  "/reactions/post/:postId/summary",
-  ReactionCtrl.getReactionsSummaryForPost
-);
+router.get("/reactions/summary", ReactionCtrl.getReactionsSummary);
 
 module.exports = router;
