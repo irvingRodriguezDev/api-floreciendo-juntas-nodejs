@@ -104,7 +104,15 @@ const me = async (req, res) => {
   try {
     // 1. Encontramos el usuario, seleccionando sus atributos básicos
     const user = await User.findByPk(req.user.id, {
-      attributes: ["id", "email", "name", "stripe_id"], // Mantenemos stripe_id por si acaso
+      attributes: [
+        "id",
+        "email",
+        "name",
+        "stripe_id",
+        "profileImage",
+        "phone",
+        "createdAt",
+      ], // Mantenemos stripe_id por si acaso
       // 2. Incluimos el modelo Subscription
       include: [
         {
@@ -140,7 +148,10 @@ const me = async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        phone: user.phone,
         isSubscribed: isSubscribed, // Boolean: true/false
+        profileImage: getS3Url(user.profileImage),
+        member_since: user.createdAt,
         // Puedes enviar los detalles de la suscripción activa si los necesitas en el front
         subscriptionDetails: isSubscribed
           ? {
