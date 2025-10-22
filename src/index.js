@@ -3,6 +3,7 @@ require("dotenv").config();
 
 const express = require("express");
 const http = require("http"); // 👈 Necesario para crear el servidor
+const socket = require("./socket");
 const { Server: SocketServer } = require("socket.io");
 const sequelize = require("./config/db");
 const seedData = require("./config/seed");
@@ -36,36 +37,12 @@ app.use(
 
 // ✅ Crear servidor HTTP a partir de Express
 const server = http.createServer(app);
-
-// ✅ Crear instancia de Socket.IO
-const io = new SocketServer(server, {
-  cors: {
-    origin: "*", // Cambia esto por tu dominio o http://localhost:3000
-  },
-});
-
-// ✅ Configurar los eventos de conexión de Socket.IO
+const io = socket.init(server);
 io.on("connection", (socket) => {
   console.log("🔗 Cliente conectado:", socket.id);
-
-  socket.on("newPost", (post) => {
-    console.log("📝 Nuevo post recibido:", post);
-    io.emit("postCreated", post); // Envía a todos los clientes
-  });
-
-  socket.on("newComment", (comment) => {
-    console.log("💬 Nuevo comentario:", comment);
-    io.emit("commentCreated", comment);
-  });
-
-  socket.on("newReaction", (reaction) => {
-    console.log("❤️ Nueva reacción:", reaction);
-    io.emit("reactionUpdated", reaction);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("❌ Cliente desconectado:", socket.id);
-  });
+  socket.on("disconnect", () =>
+    console.log("❌ Cliente desconectado:", socket.id)
+  );
 });
 
 // ✅ Rutas API

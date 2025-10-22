@@ -6,7 +6,7 @@ const {
 } = require("../models");
 const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-
+const socketModule = require("../socket");
 const createComment = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -32,6 +32,8 @@ const createComment = async (req, res) => {
     );
 
     await t.commit();
+    const io = socketModule.getIO();
+    io.emit("commentCreated", { postId, comment });
 
     // incluir usuario
     await comment.reload({

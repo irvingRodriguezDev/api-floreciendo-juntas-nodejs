@@ -7,8 +7,9 @@ const {
 const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
+const socketModule = require("../socket");
 const createPost = async (req, res) => {
-  const t = await sequelize.transaction(); // ✅ corrección
+  const t = await sequelize.transaction();
   try {
     const userId = req.user.id;
     const { courseId, content } = req.body;
@@ -18,21 +19,24 @@ const createPost = async (req, res) => {
     if (!content || !content.trim())
       return res.status(400).json({ message: "content es requerido" });
 
-    let attachments = null;
-    if (req.files && req.files.length) {
-      const urls = await uploadToS3(req.files);
-      attachments = urls;
-    }
-
+    // 1️⃣ Crear post sin attachment
     const post = await CommunityPost.create(
-      { courseId, userId, content, attachments },
+      { courseId, userId, content },
       { transaction: t }
     );
 
-    await t.commit();
+    // 2️⃣ Subir archivo si existe y asociar con post.id
+    if (req.file) {
+      const attachmentUrl = await uploadToS3("posts", req.file, post.id);
+      post.attachment = attachmentUrl;
+      await post.save({ transaction: t });
+    }
 
-    // incluir autor
-    await post.reload({
+    await t.commit();
+    const io = socketModule.getIO();
+    io.emit("postCreated", post);
+    // Consultar de nuevo para incluir autor
+    const postWithAuthor = await CommunityPost.findByPk(post.id, {
       include: [
         {
           model: User,
@@ -41,8 +45,7 @@ const createPost = async (req, res) => {
         },
       ],
     });
-
-    return res.status(201).json(post);
+    return res.status(201).json(postWithAuthor);
   } catch (err) {
     await t.rollback();
     console.error(err);

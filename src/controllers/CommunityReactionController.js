@@ -5,6 +5,7 @@ const {
 } = require("../models");
 const sequelize = require("../config/db");
 const { Op, fn, col } = require("sequelize");
+const socketModule = require("../socket");
 const toggleReaction = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -43,6 +44,8 @@ const toggleReaction = async (req, res) => {
         { transaction: t }
       );
       await t.commit();
+      const io = socketModule.getIO();
+      io.emit("reactionUpdated", { postId, reactions });
       return res
         .status(201)
         .json({ action: "created", message: "Reacción creada" });
