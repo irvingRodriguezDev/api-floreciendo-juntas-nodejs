@@ -6,6 +6,7 @@ const {
 } = require("../models");
 const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
+const getS3Url = require("../helpers/getS3Url");
 const createPost = async (req, res) => {
   const t = await sequelize.transaction(); // ✅ corrección
   try {
@@ -73,8 +74,8 @@ const getPostsByCourse = async (req, res) => {
           model: CommunityComment,
           as: "comments",
           attributes: ["id", "content", "userId", "createdAt"],
-          separate: true, // ✅ importante
-          limit: 2,
+          separate: true,
+          limit: 10,
           order: [["createdAt", "DESC"]],
         },
         {
@@ -88,28 +89,48 @@ const getPostsByCourse = async (req, res) => {
       offset,
     });
 
-    // Agregar resumen de reacciones por post
+    // 🔹 Mapear resultados
     const posts = rows.map((p) => {
       const reactions = p.reactions || [];
-      const summary = reactions.reduce((acc, r) => {
-        acc.total = (acc.total || 0) + 1;
-        acc.byType = acc.byType || {};
-        acc.byType[r.type] = (acc.byType[r.type] || 0) + 1;
-        return acc;
-      }, {});
+
+      // Calcular resumen de reacciones
+      const summary = reactions.reduce(
+        (acc, r) => {
+          acc.total += 1;
+          acc.byType[r.type] = (acc.byType[r.type] || 0) + 1;
+          return acc;
+        },
+        { total: 0, byType: {} }
+      );
+
+      // 🔹 Formatear imagen del autor (usando el helper)
+      const author = p.author
+        ? {
+            ...p.author.toJSON(),
+            profileImage: p.author.profileImage
+              ? getS3Url(p.author.profileImage)
+              : null,
+          }
+        : null;
+
       return {
         ...p.toJSON(),
+        author,
         reactionsSummary: summary,
-        reactions: undefined,
+        reactions: undefined, // ocultamos el array crudo
       };
     });
 
-    return res.json({ total: count, page, perPage: limit, posts });
-  } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error al obtener posts", error: err.message });
+    return res.json({
+      total: count,
+      page,
+      perPage: limit,
+      totalPages: Math.ceil(count / limit),
+      posts,
+    });
+  } catch (error) {
+    console.error("Error al obtener publicaciones:", error);
+    return res.status(500).json({ message: "Error interno del servidor" });
   }
 };
 

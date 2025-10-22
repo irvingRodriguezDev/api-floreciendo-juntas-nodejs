@@ -4,7 +4,7 @@ require("dotenv").config();
 const express = require("express");
 const http = require("http"); // 👈 Necesario para crear el servidor
 const { Server: SocketServer } = require("socket.io");
-const db = require("./config/db");
+const sequelize = require("./config/db");
 const seedData = require("./config/seed");
 const routes = require("./routes");
 const cors = require("cors");
@@ -80,7 +80,7 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3000;
 
 // ✅ Iniciar base de datos, seed y cron
-db.sequelize
+sequelize
   .sync({ alter: false })
   .then(async () => {
     console.log("Base de datos sincronizada");
