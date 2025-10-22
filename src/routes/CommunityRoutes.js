@@ -5,11 +5,14 @@ const AuthMiddleware = require("../middlewares/authMiddleware");
 const PostCtrl = require("../controllers/CommunityPostController");
 const CommentCtrl = require("../controllers/CommunityComentController");
 const ReactionCtrl = require("../controllers/CommunityReactionController");
+const { upload } = require("../middlewares/uploadCourseImage");
 
 // POSTS
+// En tu archivo de rutas:
 router.post(
   "/posts",
-  AuthMiddleware /*, upload.array("attachments")*/,
+  upload.single("attachment"),
+  AuthMiddleware,
   PostCtrl.createPost
 );
 router.get("/posts/course/:courseId", PostCtrl.getPostsByCourse); // público

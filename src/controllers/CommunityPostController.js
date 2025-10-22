@@ -28,7 +28,7 @@ const createPost = async (req, res) => {
     // 2️⃣ Subir archivo si existe y asociar con post.id
     if (req.file) {
       const attachmentUrl = await uploadToS3("posts", req.file, post.id);
-      post.attachment = attachmentUrl;
+      post.attachments = attachmentUrl.replace(/^"|"$/g, "");
       await post.save({ transaction: t });
     }
 
@@ -45,6 +45,23 @@ const createPost = async (req, res) => {
         },
       ],
     });
+
+    // Convertir URLs de S3
+    if (postWithAuthor) {
+      if (postWithAuthor.author?.profileImage) {
+        postWithAuthor.author.profileImage = getS3Url(
+          postWithAuthor.author.profileImage
+        );
+      }
+
+      if (postWithAuthor.attachments) {
+        const cleanPath = postWithAuthor.attachments
+          .replace(/\\"/g, "")
+          .replace(/^"|"$/g, "")
+          .replace(/^\//, "");
+        postWithAuthor.attachments = getS3Url(cleanPath);
+      }
+    }
     return res.status(201).json(postWithAuthor);
   } catch (err) {
     await t.rollback();
