@@ -97,6 +97,13 @@ const getPostsByCourse = async (req, res) => {
           separate: true,
           limit: 10,
           order: [["createdAt", "DESC"]],
+          include: [
+            {
+              model: User,
+              as: "user", // relación CommunityComment.belongsTo(User, { as: 'author', foreignKey: 'userId' })
+              attributes: ["id", "name", "profileImage"],
+            },
+          ],
         },
         {
           model: CommunityReaction,
@@ -111,9 +118,11 @@ const getPostsByCourse = async (req, res) => {
 
     // 🔹 Mapear resultados
     const posts = rows.map((p) => {
+      if (!p) return null;
+
       const reactions = p.reactions || [];
 
-      // Calcular resumen de reacciones
+      // 🔹 Calcular resumen de reacciones
       const summary = reactions.reduce(
         (acc, r) => {
           acc.total += 1;
@@ -123,24 +132,58 @@ const getPostsByCourse = async (req, res) => {
         { total: 0, byType: {} }
       );
 
-      // 🔹 Formatear imagen del autor (usando el helper)
+      // 🔹 Formatear attachment del post
+      const attachmentUrl = p.attachments
+        ? getS3Url(
+            String(p.attachments)
+              .replace(/\\"/g, "")
+              .replace(/^"|"$/g, "")
+              .replace(/^\/+/, "")
+          )
+        : null;
+
+      // 🔹 Formatear el autor del post
       const author = p.author
         ? {
             ...p.author.toJSON(),
             profileImage: p.author.profileImage
               ? getS3Url(p.author.profileImage)
+                  .replace(/\\"/g, "")
+                  .replace(/^"|"$/g, "")
+                  .replace(/([^:]\/)\/+/g, "$1")
+                  .trim()
               : null,
           }
         : null;
 
+      // 🔹 Formatear los comentarios
+      const formattedComments = p.comments.map((c) => ({
+        ...c.toJSON(),
+        author: c.user
+          ? {
+              ...c.user.toJSON(),
+              profileImage: c.user.profileImage
+                ? getS3Url(c.user.profileImage)
+                    .replace(/\\"/g, "")
+                    .replace(/^"|"$/g, "")
+                    .replace(/([^:]\/)\/+/g, "$1")
+                    .trim()
+                : null,
+            }
+          : null,
+      }));
+
       return {
         ...p.toJSON(),
+        attachment: attachmentUrl,
         author,
+        comments: formattedComments,
         reactionsSummary: summary,
-        reactions: undefined, // ocultamos el array crudo
+        reactions: undefined, // ocultamos array crudo
       };
     });
 
+    // 🔹 Respuesta final
     return res.json({
       total: count,
       page,
@@ -150,7 +193,9 @@ const getPostsByCourse = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al obtener publicaciones:", error);
-    return res.status(500).json({ message: "Error interno del servidor" });
+    return res
+      .status(500)
+      .json({ message: "Error interno del servidor", error: error.message });
   }
 };
 
