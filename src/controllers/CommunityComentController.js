@@ -7,17 +7,18 @@ const {
 const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const socketModule = require("../socket");
+const getS3Url = require("../helpers/getS3Url");
 const createComment = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const userId = req.user.id;
+    const { userId } = req.query;
     const { postId, content } = req.body;
 
     if (!postId) return res.status(400).json({ message: "postId requerido" });
     if (!content || !content.trim())
       return res.status(400).json({ message: "content requerido" });
 
-    // verificar existencia del post
+    // Verificar existencia del post
     const post = await CommunityPost.findByPk(postId);
     if (!post) return res.status(404).json({ message: "Post no encontrado" });
 
@@ -26,29 +27,45 @@ const createComment = async (req, res) => {
       attachments = await uploadToS3(req.files);
     }
 
-    const comment = await CommunityComment.create(
+    // Crear comentario dentro de la transacción
+    const newComment = await CommunityComment.create(
       { postId, userId, content, attachments },
       { transaction: t }
     );
 
-    await t.commit();
-    const io = socketModule.getIO();
-    io.emit("commentCreated", { postId, comment });
+    await t.commit(); // ✅ Cerramos transacción correctamente
 
-    // incluir usuario
-    await comment.reload({
+    // 🚨 Todo lo que sigue ya es fuera de la transacción
+    await newComment.reload({
       include: [
         { model: User, as: "user", attributes: ["id", "name", "profileImage"] },
       ],
     });
 
-    return res.status(201).json(comment);
+    // Si el usuario tiene imagen, formatear la URL desde S3
+    if (newComment.user?.profileImage) {
+      newComment.user.profileImage = getS3Url(newComment.user.profileImage);
+    }
+
+    // Si hay attachments, formatear también
+    if (newComment.attachments) {
+      newComment.attachments = getS3Url(newComment.attachments);
+    }
+
+    // Emitir el evento de socket
+    const io = socketModule.getIO();
+    io.emit("commentCreated", { postId, comment: newComment });
+
+    return res.status(201).json(newComment);
   } catch (err) {
-    await t.rollback();
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error al crear comentario", error: err.message });
+    // Solo intentar rollback si la transacción sigue activa
+    if (!t.finished) await t.rollback();
+
+    console.error("❌ Error al crear comentario:", err);
+    return res.status(500).json({
+      message: "Error al crear comentario",
+      error: err.message,
+    });
   }
 };
 

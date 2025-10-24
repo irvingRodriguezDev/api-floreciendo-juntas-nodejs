@@ -1,7 +1,8 @@
 process.env.TZ = "America/Mexico_City";
 require("dotenv").config();
-
+const https = require("https");
 const express = require("express");
+const fs = require("fs");
 const http = require("http"); // 👈 Necesario para crear el servidor
 const socket = require("./socket");
 const { Server: SocketServer } = require("socket.io");
@@ -14,7 +15,10 @@ const bodyParser = require("body-parser");
 const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
 
 const app = express();
-
+// 1. Cargar los archivos generados por mkcert
+const privateKey = fs.readFileSync("localhost+2-key.pem", "utf8");
+const certificate = fs.readFileSync("localhost+2.pem", "utf8");
+const credentials = { key: privateKey, cert: certificate };
 // 🧠 PRIMERO el Webhook (usa raw body)
 app.post(
   "/webhook/stripe",
@@ -36,8 +40,9 @@ app.use(
 );
 
 // ✅ Crear servidor HTTP a partir de Express
-const server = http.createServer(app);
-const io = socket.init(server);
+// 2. Crear el servidor HTTPS
+const httpsServer = https.createServer(credentials, app);
+const io = socket.init(httpsServer);
 io.on("connection", (socket) => {
   console.log("🔗 Cliente conectado:", socket.id);
   socket.on("disconnect", () =>
@@ -68,8 +73,9 @@ sequelize
     expireSubscriptionsJob.start();
 
     // ❗ IMPORTANTE: Iniciar el servidor HTTP (NO app.listen)
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 Servidor corriendo en http://0.0.0.0:${PORT}`);
+    // 2. Crear el servidor HTTPS
+    httpsServer.listen(PORT, () => {
+      console.log(`Servidor HTTPS corriendo en https://localhost:${PORT}`);
     });
   })
   .catch((err) => console.error("Error DB:", err));
