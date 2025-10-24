@@ -13,6 +13,7 @@ const CommunityPost = require("./CommunityPost");
 const CommunityReaction = require("./CommunityReaction");
 const CourseProgress = require("./CourseProgress");
 const CommunityComment = require("./CommunityComment");
+const CertificateCourse = require("./CertificateCourse");
 
 // Registrar modelos en el objeto db
 const db = {
@@ -29,6 +30,7 @@ const db = {
   CourseProgress,
   CommunityComment,
   CommunityReaction,
+  CertificateCourse,
 };
 
 // 🔹 Asociaciones directas (si prefieres aquí algunas simples)

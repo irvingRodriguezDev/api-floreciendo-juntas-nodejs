@@ -4,6 +4,7 @@ const {
   ImageCourses,
   CourseVideo,
   CourseProgress,
+  CertificateCourse,
 } = require("../models");
 const { Op, json } = require("sequelize");
 const slugify = require("slugify");
@@ -11,6 +12,7 @@ const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const Sequelize = require("sequelize");
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 //funcion para crear el curso
 const createCourse = async (req, res) => {
   try {
@@ -41,20 +43,34 @@ const createCourse = async (req, res) => {
       system_id,
     });
 
-    // Subir imagen si se envía
-    if (req.file) {
-      // 1️⃣ Crear registro de imagen vacío para obtener id
+    // Manejo de archivos
+    const imageFile = req.files?.coverImage?.[0];
+    const certificateFile = req.files?.certificate?.[0];
+
+    if (imageFile) {
       const imageRecord = await ImageCourses.create({
         courseId: course.id,
         s3_key: "",
         is_active: true,
       });
 
-      // 2️⃣ Subir a S3 usando el id del registro
-      const imageKey = await uploadToS3("courses", req.file, imageRecord.id);
-
-      // 3️⃣ Actualizar el registro con la key real
+      const imageKey = await uploadToS3("courses", imageFile, imageRecord.id);
       await imageRecord.update({ s3_key: imageKey });
+    }
+
+    if (certificateFile) {
+      const certificateRecord = await CertificateCourse.create({
+        courseId: course.id,
+        s3_key_certificate: "",
+        is_active: true,
+      });
+
+      const certificateKey = await uploadToS3(
+        "certificates",
+        certificateFile,
+        certificateRecord.id
+      );
+      await certificateRecord.update({ s3_key_certificate: certificateKey });
     }
 
     // Traer curso con imagen activa
@@ -88,6 +104,7 @@ const createCourse = async (req, res) => {
     });
   }
 };
+
 const getCourses = async (req, res) => {
   try {
     const courses = await Course.findAll({
@@ -512,6 +529,74 @@ const deleteCourse = async (req, res) => {
     return res.status(500).json({ msg: "Error al eliminar curso" });
   }
 };
+const downloadCertificate = async (req, res) => {
+  try {
+    const { userName, courseId } = req.query;
+
+    if (!userName) {
+      return res
+        .status(400)
+        .json({ message: "El nombre del usuario es obligatorio" });
+    }
+
+    // 1️⃣ Buscar certificado asociado al curso
+    const certificado = await CertificateCourse.findOne({
+      where: { courseId },
+    });
+
+    if (!certificado) {
+      return res
+        .status(404)
+        .json({ message: "Certificado no encontrado para este curso" });
+    }
+
+    const { s3_key_certificate } = certificado;
+
+    // 2️⃣ Obtener URL pública del certificado base
+    const pdfUrl = getS3Url(s3_key_certificate);
+
+    // 3️⃣ Descargar el PDF base desde S3
+    const existingPdfBytes = await fetch(pdfUrl).then((r) => r.arrayBuffer());
+    const pdfDoc = await PDFDocument.load(existingPdfBytes);
+
+    const pages = pdfDoc.getPages();
+    const page = pages[0];
+
+    const width = page.getWidth();
+    const height = page.getHeight();
+
+    // Fuente (luego te ayudo a cambiarla por una Script elegante)
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    // 4️⃣ Dibujar el nombre centrado horizontalmente en una banda de 5cm
+    const textSize = 42;
+    const textWidth = font.widthOfTextAtSize(userName, textSize);
+    const xCentered = (width - textWidth) / 2;
+
+    // 5cm desde la parte baja (aprox 140px a 72dpi)
+    const yPosition = 280;
+
+    page.drawText(userName, {
+      x: xCentered,
+      y: yPosition,
+      size: textSize,
+      font,
+      color: rgb(0.1, 0.1, 0.4),
+    });
+
+    const pdfBytes = await pdfDoc.save();
+
+    // 5️⃣ Enviar PDF para descarga
+    const fileName = `certificado_${userName.replace(/ /g, "_")}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(Buffer.from(pdfBytes));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error generando certificado" });
+  }
+};
 
 module.exports = {
   createCourse,
@@ -523,4 +608,5 @@ module.exports = {
   getNewCourses,
   getCoursesBySystem,
   getTopViewedCourses,
+  downloadCertificate,
 };

@@ -5,8 +5,16 @@ const { upload } = require("../middlewares/uploadCourseImage");
 const courseController = require("../controllers/CourseController");
 
 // ✅ Rutas correctas
-router.post("/", upload.single("coverImage"), courseController.createCourse);
+router.post(
+  "/",
+  upload.fields([
+    { name: "coverImage", maxCount: 1 },
+    { name: "certificate", maxCount: 1 },
+  ]),
+  courseController.createCourse
+);
 router.get("/", courseController.getCourses);
+router.get("/download-certificate", courseController.downloadCertificate);
 router.get("/lastAdded", courseController.getNewCourses);
 router.get("/paginate", courseController.getCoursesPaginate);
 router.get("/bySystem", courseController.getCoursesBySystem);
