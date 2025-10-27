@@ -20,7 +20,14 @@ router.get("/paginate", courseController.getCoursesPaginate);
 router.get("/bySystem", courseController.getCoursesBySystem);
 router.get("/top-viewed-courses", courseController.getTopViewedCourses);
 router.get("/:id", courseController.getCourseById);
-router.put("/:id", upload.single("coverImage"), courseController.updateCourse);
+router.put(
+  "/:id",
+  upload.fields([
+    { name: "coverImage", maxCount: 1 },
+    { name: "certificate", maxCount: 1 },
+  ]),
+  courseController.updateCourse
+);
 router.delete("/:id", courseController.deleteCourse);
 
 module.exports = router;

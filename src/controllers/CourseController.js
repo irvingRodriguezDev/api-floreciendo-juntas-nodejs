@@ -13,6 +13,7 @@ const getS3Url = require("../helpers/getS3Url");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const Sequelize = require("sequelize");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+
 //funcion para crear el curso
 const createCourse = async (req, res) => {
   try {
@@ -115,6 +116,12 @@ const getCourses = async (req, res) => {
           where: { is_active: true },
           required: false, // si no hay imagen activa, igualmente trae el curso
         },
+        {
+          model: CertificateCourse,
+          as: "certificates",
+          where: { is_active: true },
+          required: false, // si no hay imagen activa, igualmente trae el curso
+        },
       ],
     });
 
@@ -123,6 +130,9 @@ const getCourses = async (req, res) => {
     const formatted = courses.map((c) => ({
       ...c.toJSON(),
       cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+      certificate_url: c.certificates?.[0]
+        ? getS3Url(c.certificates[0].s3_key_certificate)
+        : null,
     }));
 
     res.json(formatted);
@@ -457,19 +467,27 @@ const getCourseById = async (req, res) => {
 const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
-    // Buscar curso con todas sus imágenes
+
+    // Buscar curso con imágenes y certificados
     const course = await Course.findByPk(id, {
-      include: [{ model: ImageCourses, as: "images" }],
+      include: [
+        { model: ImageCourses, as: "images" },
+        { model: CertificateCourse, as: "certificates" },
+      ],
     });
+
     if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
 
-    // Subir nueva imagen si llega archivo
-    if (req.file) {
+    const imageFile = req.files?.coverImage?.[0];
+    const certificateFile = req.files?.certificate?.[0];
+
+    // ✅ Subir nueva imagen si llega archivo
+    if (imageFile) {
       // Desactivar imágenes actuales
       if (course.images?.length > 0) {
-        for (const img of course.images) {
-          await img.update({ is_active: false });
-        }
+        await Promise.all(
+          course.images.map((img) => img.update({ is_active: false }))
+        );
       }
 
       // Crear registro nuevo
@@ -479,22 +497,52 @@ const updateCourse = async (req, res) => {
         is_active: true,
       });
 
-      // Subir a S3 usando el id del registro
-      const imageKey = await uploadToS3("courses", req.file, imageRecord.id);
+      // Subir a S3 usando el archivo correcto
+      const imageKey = await uploadToS3("courses", imageFile, imageRecord.id);
 
       // Actualizar el registro con la key real
       await imageRecord.update({ s3_key: imageKey });
     }
 
-    // Actualizar otros campos del curso
+    // ✅ Subir nuevo certificado si llega archivo
+    if (certificateFile) {
+      // Desactivar certificados actuales
+      if (course.certificates?.length > 0) {
+        await Promise.all(
+          course.certificates.map((cert) => cert.update({ is_active: false }))
+        );
+      }
+
+      const certificateRecord = await CertificateCourse.create({
+        courseId: course.id,
+        s3_key_certificate: "",
+        is_active: true,
+      });
+
+      const certificateKey = await uploadToS3(
+        "certificates",
+        certificateFile,
+        certificateRecord.id
+      );
+
+      await certificateRecord.update({ s3_key_certificate: certificateKey });
+    }
+
+    // ✅ Actualizar otros campos del curso
     await course.update(req.body);
 
-    // Traer curso actualizado con imagen activa
+    // ✅ Traer curso actualizado con imagen y certificado activos
     const updatedCourse = await Course.findByPk(id, {
       include: [
         {
           model: ImageCourses,
           as: "images",
+          where: { is_active: true },
+          required: false,
+        },
+        {
+          model: CertificateCourse,
+          as: "certificates",
           where: { is_active: true },
           required: false,
         },
@@ -506,6 +554,9 @@ const updateCourse = async (req, res) => {
       cover_image_url: updatedCourse.images?.[0]
         ? getS3Url(updatedCourse.images[0].s3_key)
         : null,
+      certificate_url: updatedCourse.certificates?.[0]
+        ? getS3Url(updatedCourse.certificates[0].s3_key_certificate)
+        : null,
     };
 
     return res.json(formatted);
@@ -514,6 +565,7 @@ const updateCourse = async (req, res) => {
     return res.status(500).json({ msg: "Error al actualizar curso" });
   }
 };
+
 // Eliminar curso
 const deleteCourse = async (req, res) => {
   try {

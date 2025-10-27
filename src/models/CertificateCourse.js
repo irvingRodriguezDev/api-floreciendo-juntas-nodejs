@@ -30,9 +30,8 @@ const certificateCourse = sequelize.define(
 );
 certificateCourse.associate = (models) => {
   certificateCourse.belongsTo(models.Course, {
-    foreignKey: "courseId",
     as: "course",
-    onDelete: "CASCADE",
+    foreignKey: "courseId",
   });
 };
 module.exports = certificateCourse;

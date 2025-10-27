@@ -98,6 +98,10 @@ Course.associate = (models) => {
     as: "progresses",
     onDelete: "CASCADE",
   });
+  Course.hasMany(models.CertificateCourse, {
+    as: "certificates",
+    foreignKey: "courseId",
+  });
 };
 
 module.exports = Course;
