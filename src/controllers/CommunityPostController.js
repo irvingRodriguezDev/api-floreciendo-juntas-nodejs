@@ -143,9 +143,10 @@ const getPostsByCourse = async (req, res) => {
         : null;
 
       // 🔹 Formatear el autor del post
-      const author = p.author
+      const user = p.author
         ? {
-            ...p.author.toJSON(),
+            id: p.author.id,
+            name: p.author.name,
             profileImage: p.author.profileImage
               ? getS3Url(p.author.profileImage)
                   .replace(/\\"/g, "")
@@ -159,9 +160,10 @@ const getPostsByCourse = async (req, res) => {
       // 🔹 Formatear los comentarios
       const formattedComments = p.comments.map((c) => ({
         ...c.toJSON(),
-        author: c.user
+        user: c.user
           ? {
-              ...c.user.toJSON(),
+              id: c.user.id,
+              name: c.user.name,
               profileImage: c.user.profileImage
                 ? getS3Url(c.user.profileImage)
                     .replace(/\\"/g, "")
@@ -175,8 +177,8 @@ const getPostsByCourse = async (req, res) => {
 
       return {
         ...p.toJSON(),
-        attachment: attachmentUrl,
-        author,
+        attachments: attachmentUrl,
+        user,
         comments: formattedComments,
         reactionsSummary: summary,
         reactions: undefined, // ocultamos array crudo
