@@ -434,6 +434,12 @@ const getCourseById = async (req, res) => {
           where: { is_active: true },
           required: true, // el curso puede no tener video aún
         },
+        {
+          model: CertificateCourse,
+          as: "certificates",
+          where: { is_active: true },
+          required: false, // si no hay imagen activa, igualmente trae el curso
+        },
       ],
     });
 
@@ -453,6 +459,9 @@ const getCourseById = async (req, res) => {
         ...img.toJSON(),
         url: getS3Url(img.s3_key),
       })),
+      certificate_url: course.certificates?.[0]
+        ? getS3Url(course.certificates[0].s3_key_certificate)
+        : null,
     };
 
     return res.status(200).json(formattedCourse);

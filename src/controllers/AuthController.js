@@ -6,6 +6,7 @@ const { addToBlacklist } = require("../utils/tokenBlacklist");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const { validationResult } = require("express-validator");
+const socketModule = require("../socket");
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -295,6 +296,12 @@ const uploadProfileImage = async (req, res) => {
 
     // Obtener la URL pública usando getS3Url
     const publicUrl = getS3Url(user.profileImage);
+
+    const io = socketModule.getIO();
+    io.to(`user_${userId}`).emit("profileImageUpdated", {
+      userId,
+      profileImage: publicUrl,
+    });
 
     res.json({
       msg: "Imagen de perfil subida exitosamente",

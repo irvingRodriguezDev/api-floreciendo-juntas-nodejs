@@ -1,11 +1,16 @@
+const getS3Url = require("../../helpers/getS3Url");
 const { User } = require("../../models");
 const { Op } = require("sequelize");
 const getAllUsers = async (req, res) => {
   try {
     const allUsers = await User.findAll();
 
+    const formatted = allUsers.map((c) => ({
+      ...c.toJSON(),
+      profileImageUrl: c.profileImage ? getS3Url(c.profileImage) : null,
+    }));
     return res.status(200).json({
-      users: allUsers,
+      users: formatted,
     });
   } catch (error) {
     console.error("Error al obtener los usuarios:", error);

@@ -1,71 +1,59 @@
 const stripe = require("../config/stripe");
-const { User, Subscription } = require("../models"); // Importar el nuevo modelo Subscription
+const { User, Subscription } = require("../models");
 
 const createPayment = async (req, res) => {
   try {
     const { userId, priceId } = req.body;
 
-    // 1. Obtener el usuario y verificar existencia
+    // 1. Validar usuario
     const user = await User.findByPk(userId);
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    // 2. Lógica para crear o usar el Stripe Customer ID
+    // 2. Crear Stripe Customer si no existe
     let customerId = user.stripe_id;
-
     if (!customerId) {
-      // Si el usuario no tiene un ID de Stripe, créalo ahora
       const customer = await stripe.customers.create({
         email: user.email,
-        name: user.name, // Asegúrate de usar el campo de nombre correcto
+        name: user.name,
       });
       customerId = customer.id;
-
-      // ¡Importante! Guardar el nuevo ID en tu base de datos
       await user.update({ stripe_id: customerId });
+      console.log("Cliente Stripe creado:", customerId);
     }
 
-    // 3. Determinar el modo y tipo de suscripción
+    // 3. Determinar modo
     const isRecurring = priceId === process.env.STRIPE_PRICE_RECURRING;
     const mode = isRecurring ? "subscription" : "payment";
     const subscriptionType = isRecurring ? "RECURRING" : "ONETIME";
 
-    // 4. Crear la Checkout Session en Stripe
+    // 4. Crear sesión de Checkout
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
+      line_items: [{ price: priceId, quantity: 1 }],
       mode: mode,
-      // === CRÍTICO: METADATA para que el Webhook identifique el usuario y el tipo ===
       metadata: {
         userId: userId.toString(),
-        priceId: priceId,
-        subscriptionType: subscriptionType,
+        priceId,
+        subscriptionType,
       },
       client_reference_id: userId.toString(),
-      // ==============================================================================
       success_url:
         process.env.CLIENT_URL + "/success?session_id={CHECKOUT_SESSION_ID}",
       cancel_url: process.env.CLIENT_URL + "/cancel",
     });
 
-    // 5. ¡NUEVO PASO! Crear el registro temporal en tu tabla Subscriptions.
-    // Lo marcamos como 'pendiente' o 'creado' hasta que el webhook lo confirme.
-    // Esto es útil para rastreo y para evitar que el usuario intente pagar dos veces.
+    console.log("Checkout Session creada:", session.id);
+
+    // 5. Guardar registro temporal en DB
     await Subscription.create({
-      stripe_checkout_session_id: session.id, // ID de la sesión de Stripe
+      stripe_checkout_session_id: session.id,
       subscription_type: subscriptionType,
       price_id: priceId,
       userId: userId,
-      status: "trialing", // Nuevo estado que debes añadir al ENUM de tu modelo
-      // Los campos como start_date, end_date, etc., se llenan en el Webhook
+      status: "pending", // estado inicial seguro
     });
 
-    // 6. Devolver la respuesta al frontend
     res.status(200).json({ id: session.id, url: session.url });
   } catch (error) {
     console.error("Error creando pago:", error);

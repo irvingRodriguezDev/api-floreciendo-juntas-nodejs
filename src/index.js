@@ -1,48 +1,51 @@
-process.env.TZ = "America/Mexico_City";
 require("dotenv").config();
-const https = require("https");
+process.env.TZ = "America/Mexico_City";
+
 const express = require("express");
-const fs = require("fs");
-const http = require("http"); // 👈 Necesario para crear el servidor
-const socket = require("./socket");
-const { Server: SocketServer } = require("socket.io");
+const http = require("http");
+const { init } = require("./socket");
 const sequelize = require("./config/db");
 const seedData = require("./config/seed");
 const routes = require("./routes");
 const cors = require("cors");
-const webhookController = require("./controllers/WebhookController");
 const bodyParser = require("body-parser");
+const webhookController = require("./controllers/WebhookController");
 const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
 
 const app = express();
-// 1. Cargar los archivos generados por mkcert
-const privateKey = fs.readFileSync("localhost+2-key.pem", "utf8");
-const certificate = fs.readFileSync("localhost+2.pem", "utf8");
-const credentials = { key: privateKey, cert: certificate };
-// 🧠 PRIMERO el Webhook (usa raw body)
+
+// ==============================
+// 1️⃣ Stripe Webhook (raw body)
+// ==============================
 app.post(
   "/webhook/stripe",
   bodyParser.raw({ type: "application/json" }),
   webhookController.handleStripeWebhook
 );
 
-// 👇 AHORA sí, los parsers normales
+// ==============================
+// 2️⃣ Parsers normales
+// ==============================
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS
+// ==============================
+// 3️⃣ CORS configurado para frontend
+// ==============================
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: false,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-// ✅ Crear servidor HTTP a partir de Express
-// 2. Crear el servidor HTTPS
-const httpsServer = https.createServer(credentials, app);
-const io = socket.init(httpsServer);
+// ==============================
+// 4️⃣ Crear servidor HTTP + Socket.IO
+// ==============================
+const httpServer = http.createServer(app);
+const io = init(httpServer);
 io.on("connection", (socket) => {
   console.log("🔗 Cliente conectado:", socket.id);
   socket.on("disconnect", () =>
@@ -50,7 +53,9 @@ io.on("connection", (socket) => {
   );
 });
 
-// ✅ Rutas API
+// ==============================
+// 5️⃣ Rutas API
+// ==============================
 app.use("/api", routes);
 
 // Middleware 404
@@ -58,24 +63,30 @@ app.use((req, res) => {
   res.status(404).json({ msg: "Ruta no encontrada" });
 });
 
-// ✅ Puerto del servidor
+// ==============================
+// 6️⃣ Puerto del servidor
+// ==============================
 const PORT = process.env.PORT || 3000;
 
-// ✅ Iniciar base de datos, seed y cron
+// ==============================
+// 7️⃣ Iniciar DB, seed y cron
+// ==============================
 sequelize
   .sync({ alter: false })
   .then(async () => {
-    console.log("Base de datos sincronizada");
+    console.log("✅ Base de datos sincronizada");
 
     await seedData();
+    console.log("✅ Seed completado");
 
-    // Iniciar cron
+    // Iniciar cron jobs
     expireSubscriptionsJob.start();
+    console.log("🕒 Cron jobs iniciados");
 
-    // ❗ IMPORTANTE: Iniciar el servidor HTTP (NO app.listen)
-    // 2. Crear el servidor HTTPS
-    httpsServer.listen(PORT, () => {
-      console.log(`Servidor HTTPS corriendo en https://localhost:${PORT}`);
+    // Levantar servidor HTTP
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`🌐 Servidor corriendo en http://localhost:${PORT}`);
+      console.log(`🌐 Exponer con ngrok: ngrok http ${PORT}`);
     });
   })
-  .catch((err) => console.error("Error DB:", err));
+  .catch((err) => console.error("❌ Error DB:", err));

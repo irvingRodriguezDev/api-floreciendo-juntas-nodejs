@@ -100,7 +100,7 @@ const getPostsByCourse = async (req, res) => {
           include: [
             {
               model: User,
-              as: "user", // relación CommunityComment.belongsTo(User, { as: 'author', foreignKey: 'userId' })
+              as: "user",
               attributes: ["id", "name", "profileImage"],
             },
           ],
@@ -116,13 +116,12 @@ const getPostsByCourse = async (req, res) => {
       offset,
     });
 
-    // 🔹 Mapear resultados
     const posts = rows.map((p) => {
       if (!p) return null;
 
       const reactions = p.reactions || [];
 
-      // 🔹 Calcular resumen de reacciones
+      // Resumen de reacciones
       const summary = reactions.reduce(
         (acc, r) => {
           acc.total += 1;
@@ -132,7 +131,7 @@ const getPostsByCourse = async (req, res) => {
         { total: 0, byType: {} }
       );
 
-      // 🔹 Formatear attachment del post
+      // Formatear attachments del post
       const attachmentUrl = p.attachments
         ? getS3Url(
             String(p.attachments)
@@ -142,8 +141,8 @@ const getPostsByCourse = async (req, res) => {
           )
         : null;
 
-      // 🔹 Formatear el autor del post
-      const user = p.author
+      // Formatear author
+      const author = p.author
         ? {
             id: p.author.id,
             name: p.author.name,
@@ -157,7 +156,7 @@ const getPostsByCourse = async (req, res) => {
           }
         : null;
 
-      // 🔹 Formatear los comentarios
+      // Formatear comentarios con user y su profileImage
       const formattedComments = p.comments.map((c) => ({
         ...c.toJSON(),
         user: c.user
@@ -178,14 +177,13 @@ const getPostsByCourse = async (req, res) => {
       return {
         ...p.toJSON(),
         attachments: attachmentUrl,
-        user,
+        author,
         comments: formattedComments,
         reactionsSummary: summary,
         reactions: undefined, // ocultamos array crudo
       };
     });
 
-    // 🔹 Respuesta final
     return res.json({
       total: count,
       page,

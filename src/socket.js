@@ -1,4 +1,3 @@
-// socket.js
 let io = null;
 
 module.exports = {
@@ -6,7 +5,7 @@ module.exports = {
     const { Server } = require("socket.io");
     io = new Server(server, {
       cors: { origin: "*" },
-      path: "/api/socket.io",
+      path: "/socket.io",
     });
     return io;
   },
