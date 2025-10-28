@@ -14,7 +14,8 @@ const CommunityReaction = require("./CommunityReaction");
 const CourseProgress = require("./CourseProgress");
 const CommunityComment = require("./CommunityComment");
 const CertificateCourse = require("./CertificateCourse");
-
+const Event = require("./Event");
+const Ticket = require("./Ticket");
 // Registrar modelos en el objeto db
 const db = {
   sequelize,
@@ -31,6 +32,8 @@ const db = {
   CommunityComment,
   CommunityReaction,
   CertificateCourse,
+  Event,
+  Ticket,
 };
 
 // 🔹 Asociaciones directas (si prefieres aquí algunas simples)

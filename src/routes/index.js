@@ -13,6 +13,8 @@ const ProgressCourseRoutes = require("./ProgressCourseRoutes");
 const CommunityRoutes = require("./CommunityRoutes");
 const UserRoutes = require("./UserRoutes");
 const adminRoutes = require("./AdminRoutes");
+const EventRoutes = require("./EventRoutes");
+const TicketRoutes = require("./TicketRoutes");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -25,5 +27,7 @@ router.use("/progress-video", ProgressCourseRoutes);
 router.use("/community", CommunityRoutes);
 router.use("/user", UserRoutes);
 router.use("/admin", adminRoutes);
+router.use("/events", EventRoutes);
+router.use("/tickets", TicketRoutes);
 
 module.exports = router;
