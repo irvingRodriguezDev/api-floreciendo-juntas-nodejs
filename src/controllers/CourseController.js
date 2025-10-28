@@ -105,7 +105,6 @@ const createCourse = async (req, res) => {
     });
   }
 };
-
 const getCourses = async (req, res) => {
   try {
     const courses = await Course.findAll({
@@ -574,7 +573,6 @@ const updateCourse = async (req, res) => {
     return res.status(500).json({ msg: "Error al actualizar curso" });
   }
 };
-
 // Eliminar curso
 const deleteCourse = async (req, res) => {
   try {
