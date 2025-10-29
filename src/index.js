@@ -11,6 +11,7 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 const webhookController = require("./controllers/WebhookController");
 const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
+const releaseExpiredReservations = require("./jobs/releaseReservations");
 
 const app = express();
 
@@ -18,9 +19,15 @@ const app = express();
 // 1️⃣ Stripe Webhook (raw body)
 // ==============================
 app.post(
-  "/webhook/stripe",
+  "/webhooks/stripe/subscription",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleStripeWebhook
+  webhookController.handleSubscriptionStripeWebhook
+);
+
+app.post(
+  "/webhooks/stripe/ticket",
+  bodyParser.raw({ type: "application/json" }),
+  webhookController.handleTicketStripeWebhook
 );
 
 // ==============================
@@ -81,6 +88,7 @@ sequelize
 
     // Iniciar cron jobs
     expireSubscriptionsJob.start();
+    releaseExpiredReservations.start();
     console.log("🕒 Cron jobs iniciados");
 
     // Levantar servidor HTTP

@@ -25,6 +25,14 @@ const Ticket = sequelize.define("Ticket", {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
   },
+  reserved: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  reservation_expires_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
 });
 
 // Relación: un evento tiene muchos tickets

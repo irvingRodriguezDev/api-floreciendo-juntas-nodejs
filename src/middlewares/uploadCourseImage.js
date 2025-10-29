@@ -20,7 +20,6 @@ const uploadToS3 = async (folder, file, id) => {
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,
-      // ACL: "public-read",
     },
   });
 

@@ -17,6 +17,6 @@ router.get("/latest", eventController.getLatestEvents);
 router.get("/:id", eventController.getEventById);
 
 // Comprar ticket
-router.post("/:id/buy", eventController.buyTicket);
+router.post("/buy/ticket", eventController.buyTicket);
 
 module.exports = router;

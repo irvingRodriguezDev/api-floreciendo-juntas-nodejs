@@ -1,7 +1,10 @@
 const stripe = require("../config/stripe");
-const { Subscription, User } = require("../models");
-
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+const { Subscription, User, Ticket } = require("../models");
+const generateTicketPDF = require("../helpers/generateTicketPdf");
+const sendTicketEmail = require("../helpers/sendTicketMail");
+const subscriptionEndpointSecret =
+  process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET;
+const ticketEndpointSecret = process.env.STRIPE_WEBHOOK_TICKET_SECRET;
 
 // Función para calcular expiración de pago único
 const getExpirationDate = () => {
@@ -10,13 +13,17 @@ const getExpirationDate = () => {
   return now;
 };
 
-const handleStripeWebhook = async (req, res) => {
+const handleSubscriptionStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
   try {
     // req.body debe ser RAW (Buffer)
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      subscriptionEndpointSecret
+    );
     console.log("Evento recibido:", event.type);
   } catch (err) {
     console.error("Error verificando webhook:", err.message);
@@ -122,4 +129,75 @@ const handleStripeWebhook = async (req, res) => {
   }
 };
 
-module.exports = { handleStripeWebhook };
+const handleTicketStripeWebhook = async (req, res) => {
+  // El cuerpo de la solicitud (req.body) DEBE ser el buffer raw para la verificación.
+  const sig = req.headers["stripe-signature"];
+
+  try {
+    // Construir el evento de Stripe y verificar la firma
+    const event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      ticketEndpointSecret
+    );
+
+    // Solo manejamos checkout.session.completed
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      // Obtener metadatos de la sesión
+      const { ticketId, eventId, buyerName, buyerEmail } = session.metadata;
+
+      const ticketIdNumber = parseInt(ticketId, 10);
+
+      // Buscar ticket reservado
+      const ticket = await Ticket.findByPk(ticketIdNumber);
+
+      // Stripe reintentará este evento si no recibe un 2xx.
+      if (!ticket) {
+        console.warn(`Ticket #${ticketIdNumber} no encontrado. Se ignora.`);
+        // Retornamos 200 OK para evitar que Stripe reintente un ticket inexistente
+        return res.status(200).json({
+          received: true,
+          message: "Ticket ignorado (no encontrado).",
+        });
+      }
+
+      // Marcar como vendido y liberar la reserva
+      ticket.sold = true;
+      ticket.reserved = false;
+      ticket.reservation_expires_at = null;
+      await ticket.save();
+
+      // Emitir evento por socket (si lo tienes conectado)
+      if (req.io) {
+        req.io.emit("ticketSold", {
+          eventId,
+          ticketId: ticket.id,
+          buyerName,
+        });
+      }
+
+      // 1. Generar QR y subir a S3
+      // La función 'generateTicketQR' ya retorna la URL pública (la corrección anterior)
+      const publicUrl = await generateTicketPDF(ticket);
+
+      // 2. Enviar correo con la URL
+      // Usamos el 'buyerEmail' de la sesión de Stripe, que es la fuente de verdad del pago.
+      await sendTicketEmail(buyerEmail, publicUrl, ticket);
+
+      console.log(
+        `🎟️ Ticket #${ticket.id} confirmado y enviado a ${buyerEmail}`
+      );
+    }
+
+    // Respuesta exitosa (200 OK)
+    res.status(200).json({ received: true });
+  } catch (err) {
+    // Si la firma es inválida o hay otro error, Stripe lo reintentará.
+    console.error("❌ Error en webhook de ticket:", err.message);
+    res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+};
+
+module.exports = { handleSubscriptionStripeWebhook, handleTicketStripeWebhook };
