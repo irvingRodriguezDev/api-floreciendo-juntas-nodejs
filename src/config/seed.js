@@ -8,6 +8,7 @@ async function seedData() {
     { id: 2, name: "Multimedia" },
     { id: 3, name: "Evaluador" },
     { id: 4, name: "Usuario" },
+    { id: 5, name: "Scanner" },
   ];
 
   for (const role of roles) {

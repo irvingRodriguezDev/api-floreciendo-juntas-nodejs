@@ -6,10 +6,11 @@ const slugify = require("slugify");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
-const { Op, json } = require("sequelize");
+const { Op, json, literal } = require("sequelize");
 const stripe = require("../config/stripe");
 // Crear un evento y generar tickets
 const RESERVATION_MINUTES = 15;
+const SEARCH_LIMIT = 50;
 const createEvent = async (req, res) => {
   try {
     const {
@@ -68,18 +69,91 @@ const createEvent = async (req, res) => {
 };
 
 // Listar todos los eventos
+
 const getEvents = async (req, res) => {
   try {
-    const events = await Event.findAll({
-      include: [{ model: Ticket, as: "tickets" }],
+    res.set("Cache-Control", "no-store"); // evita 304
+
+    const search = (req.query.search || "").trim();
+
+    // Campos esenciales del evento + COUNT de tickets libres
+    const eventAttributes = [
+      "id",
+      "title",
+      "description",
+      "startDate",
+      "endDate",
+      "location",
+      "image",
+      "time",
+      "createdAt",
+      [
+        literal(`(
+          SELECT COUNT(*)
+          FROM Tickets t
+          WHERE t.eventId = Event.id AND t.sold = 0
+        )`),
+        "availableTickets",
+      ],
+    ];
+
+    // 🟢 Modo búsqueda sin paginación
+    if (search) {
+      const events = await Event.findAll({
+        attributes: eventAttributes,
+        where: {
+          [Op.or]: [
+            { title: { [Op.like]: `%${search}%` } },
+            { description: { [Op.like]: `%${search}%` } },
+            { location: { [Op.like]: `%${search}%` } },
+          ],
+        },
+        order: [["createdAt", "DESC"]],
+        limit: SEARCH_LIMIT,
+      });
+
+      const formatted = events.map((event) => ({
+        ...event.toJSON(),
+        image: event.image ? getS3Url(event.image) : null,
+        availableTickets: parseInt(event.get("availableTickets"), 10),
+      }));
+
+      return res.json({
+        total: formatted.length,
+        search,
+        events: formatted,
+      });
+    }
+
+    // 🟢 Modo paginación normal
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await Event.findAndCountAll({
+      attributes: eventAttributes,
+      distinct: true,
+      col: "id",
+      limit,
+      offset,
+      order: [["createdAt", "DESC"]],
     });
-    const formatted = events.map((c) => ({
-      ...c.toJSON(),
-      image: c.image ? getS3Url(c.image) : null,
+
+    const formatted = rows.map((event) => ({
+      ...event.toJSON(),
+      image: event.image ? getS3Url(event.image) : null,
+      availableTickets: parseInt(event.get("availableTickets"), 10),
     }));
 
-    res.json(formatted);
+    return res.json({
+      total: count,
+      currentPage: page,
+      totalPages: Math.ceil(count / limit),
+      limit,
+      events: formatted,
+    });
   } catch (error) {
+    console.error("Error obteniendo eventos:", error);
     res.status(500).json({ message: "Error obteniendo eventos" });
   }
 };
@@ -112,17 +186,30 @@ const getLatestEvents = async (req, res) => {
 const getEventById = async (req, res) => {
   try {
     const { id } = req.params;
-    const event = await Event.findByPk(id, {
-      include: [{ model: Ticket, as: "tickets" }],
-    });
+
+    // Obtener evento
+    const event = await Event.findByPk(id);
     if (!event)
       return res.status(404).json({ message: "Evento no encontrado" });
+
+    // Contar tickets disponibles
+    const availableTickets = await Ticket.count({
+      where: {
+        eventId: event.id,
+        sold: 0, // solo los que están disponibles
+      },
+    });
+
+    // Formatear respuesta
     const formattedEvent = {
       ...event.toJSON(),
       image: event.image ? getS3Url(event.image) : null,
+      availableTickets, // ✅ cantidad de tickets disponibles
     };
+
     res.json(formattedEvent);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Error obteniendo evento" });
   }
 };
@@ -219,10 +306,52 @@ const buyTicket = async (req, res) => {
   }
 };
 
+const getSimilarEvents = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1️⃣ Obtener el evento principal
+    const mainEvent = await Event.findByPk(id);
+    if (!mainEvent) {
+      return res.status(404).json({ message: "Evento no encontrado" });
+    }
+
+    // 2️⃣ Buscar 3 eventos similares (mismo location, distinto id)
+    const similarEvents = await Event.findAll({
+      where: {
+        id: { [Op.ne]: mainEvent.id }, // distinto evento
+        location: mainEvent.location, // mismo lugar
+      },
+      limit: 3,
+      order: [["createdAt", "DESC"]],
+    });
+
+    // 3️⃣ Formatear imágenes S3
+    const formatted = similarEvents.map((event) => ({
+      ...event.toJSON(),
+      image: event.image ? getS3Url(event.image) : null,
+    }));
+
+    res.json({
+      mainEvent: {
+        id: mainEvent.id,
+        title: mainEvent.title,
+        location: mainEvent.location,
+        image: mainEvent.image ? getS3Url(mainEvent.image) : null,
+      },
+      similarEvents: formatted,
+    });
+  } catch (error) {
+    console.error("Error obteniendo eventos similares:", error);
+    res.status(500).json({ message: "Error obteniendo eventos similares" });
+  }
+};
+
 module.exports = {
   buyTicket,
   getEventById,
   getEvents,
   createEvent,
   getLatestEvents,
+  getSimilarEvents,
 };

@@ -29,6 +29,12 @@ router.get("/me", authMiddleware, me);
 router.post("/logout", authMiddleware, logout);
 
 // Solo admin puede crear otros usuarios especiales
-router.post("/create-user", authMiddleware, checkRole([1]), createUserWithRole);
+router.post(
+  "/create-user",
+  upload.single("profileImage"),
+  authMiddleware,
+  checkRole([1]),
+  createUserWithRole
+);
 
 module.exports = router;

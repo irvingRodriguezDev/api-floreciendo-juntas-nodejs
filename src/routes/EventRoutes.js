@@ -13,6 +13,7 @@ router.post(
   eventController.createEvent
 );
 router.get("/", eventController.getEvents);
+router.get("/similar/:id", eventController.getSimilarEvents);
 router.get("/latest", eventController.getLatestEvents);
 router.get("/:id", eventController.getEventById);
 

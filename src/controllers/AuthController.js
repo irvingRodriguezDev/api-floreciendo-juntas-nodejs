@@ -7,6 +7,7 @@ const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const { validationResult } = require("express-validator");
 const socketModule = require("../socket");
+const sequelize = require("../config/db");
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -112,6 +113,7 @@ const me = async (req, res) => {
         "stripe_id",
         "profileImage",
         "phone",
+        "roleId",
         "createdAt",
       ], // Mantenemos stripe_id por si acaso
       // 2. Incluimos el modelo Subscription
@@ -150,6 +152,7 @@ const me = async (req, res) => {
         email: user.email,
         name: user.name,
         phone: user.phone,
+        roleId: user.roleId,
         isSubscribed: isSubscribed, // Boolean: true/false
         profileImage: getS3Url(user.profileImage),
         member_since: user.createdAt,
@@ -173,38 +176,77 @@ const me = async (req, res) => {
 };
 //crear rol del admin
 const createUserWithRole = async (req, res) => {
-  try {
-    const { name, password, roleId, email, direction } = req.body;
+  const transaction = await sequelize.transaction();
 
-    if (roleId < 1 || roleId > 3) {
+  try {
+    const { name, password, roleId, email, phone } = req.body;
+
+    // Validar rol
+    if (roleId < 2 || roleId > 5) {
+      await transaction.rollback();
       return res
         .status(400)
-        .json({ msg: "Solo puedes asignar roles 1, 2 o 3" });
+        .json({ msg: "Solo puedes asignar roles del 2 al 5" });
     }
 
+    // Verificar si el usuario ya existe
     const exists = await User.findOne({ where: { email } });
-    if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
+    if (exists) {
+      await transaction.rollback();
+      return res.status(400).json({ msg: "El usuario ya existe" });
+    }
 
+    // Hashear contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await User.create({
-      name,
-      password: hashedPassword,
-      roleId,
-      direction,
-      email,
-    });
 
-    res.json({
-      msg: "Usuario creado por admin",
+    // 1️⃣ Crear usuario sin imagen
+    const newUser = await User.create(
+      {
+        name,
+        email,
+        password: hashedPassword,
+        roleId,
+        phone,
+        profileImage: null,
+      },
+      { transaction }
+    );
+
+    // 2️⃣ Subir imagen si se envía
+    if (req.file) {
+      try {
+        const file = req.file;
+        const s3Path = await uploadToS3("profileImages", file, newUser.id);
+        await newUser.update({ profileImage: s3Path }, { transaction });
+      } catch (err) {
+        console.error("Error al subir imagen a S3:", err);
+        await transaction.rollback();
+        return res
+          .status(500)
+          .json({ message: "Error al subir la imagen de perfil" });
+      }
+    }
+
+    // 3️⃣ Confirmar la transacción
+    await transaction.commit();
+
+    // 4️⃣ Responder al cliente
+    res.status(201).json({
+      message: "Usuario creado correctamente por el administrador",
       user: {
         id: newUser.id,
         email: newUser.email,
         name: newUser.name,
         roleId: newUser.roleId,
-        direction: newUser.direction,
+        profileImage: newUser.profileImage
+          ? getS3Url(newUser.profileImage)
+          : null,
+        phone: newUser.phone,
       },
     });
   } catch (error) {
+    console.error("❌ Error al crear usuario:", error);
+    await transaction.rollback();
     res
       .status(500)
       .json({ msg: "Error al crear usuario", error: error.message });
