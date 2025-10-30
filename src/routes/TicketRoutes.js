@@ -5,6 +5,8 @@ const ticketController = require("../controllers/TicketController");
 
 // Crear sesión Stripe
 router.post("/buy-ticket", ticketController.createStripeSession);
+router.get("/byUser/:userId", ticketController.getUserTickets);
+router.get("/download", ticketController.downloadTicket);
 
 // Webhook Stripe
 router.post(

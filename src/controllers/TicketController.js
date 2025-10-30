@@ -1,14 +1,15 @@
 // controllers/ticketController.js
-const { Ticket, Event } = require("../models");
+const { Ticket, Event, User } = require("../models");
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 const fs = require("fs");
 const path = require("path");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
-
+const sequelize = require("../config/db");
+const { Op, json, literal } = require("sequelize");
 // Crear sesión de pago con Stripe
-exports.createStripeSession = async (req, res) => {
+const createStripeSession = async (req, res) => {
   try {
     const { eventId, buyerName, buyerEmail } = req.body;
 
@@ -48,7 +49,7 @@ exports.createStripeSession = async (req, res) => {
 };
 
 // Webhook Stripe para confirmar pago
-exports.stripeWebhook = async (req, res) => {
+const stripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
 
@@ -129,4 +130,116 @@ const sendTicketEmail = async (ticket) => {
     text: "Gracias por tu compra. Adjuntamos tu boleto con QR.",
     attachments: [{ filename: `${ticket.code}.pdf`, path: filePath }],
   });
+};
+
+const getUserTickets = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findByPk(userId);
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ message: "El ID del usuario es requerido" });
+    }
+
+    const today = new Date();
+
+    // Buscar boletos vendidos, del usuario, y cuyo evento sigue vigente
+    const tickets = await Ticket.findAll({
+      where: {
+        buyerEmail: user.email,
+        sold: true,
+      },
+      include: [
+        {
+          model: Event,
+          as: "Event",
+          where: {
+            [Op.or]: [
+              { startDate: { [Op.gte]: today } }, // eventos que empiezan hoy o después
+              { endDate: { [Op.gte]: today } }, // eventos que no han terminado
+            ],
+          },
+          attributes: [
+            "id",
+            "title",
+            "location",
+            "startDate",
+            "endDate",
+            "image",
+            "price",
+          ],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    if (tickets.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No se encontraron boletos vigentes" });
+    }
+
+    res.status(200).json({ tickets });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al obtener boletos del usuario" });
+  }
+};
+
+const downloadTicket = async (req, res) => {
+  try {
+    const { ticketId } = req.query;
+    const { userId } = req; // si usas middleware de auth
+
+    const user = await User.findByPk(userId);
+
+    const ticket = await Ticket.findOne({
+      where: { id: ticketId, buyerEmail: user.email, sold: true },
+      include: [
+        {
+          model: Event,
+          as: "event",
+          where: { endDate: { [Op.gte]: new Date() } },
+        },
+      ],
+    });
+
+    if (!ticket) {
+      return res
+        .status(404)
+        .json({ message: "Boleto no encontrado o evento expirado" });
+    }
+
+    // Si ya existe el PDF en S3, lo devolvemos
+    if (ticket.pdfUrl) {
+      return res.status(200).json({ downloadUrl: ticket.pdfUrl });
+    }
+
+    // Si no, lo generamos
+    const pdfBuffer = await generateTicketPDF(ticket);
+    // Aquí podrías subirlo a S3:
+    // const pdfUrl = await uploadToS3("tickets", pdfBuffer, `${ticket.code}.pdf`);
+    // ticket.pdfUrl = pdfUrl;
+    // await ticket.save();
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=ticket-${ticket.code}.pdf`
+    );
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al descargar el boleto" });
+  }
+};
+
+module.exports = {
+  sendTicketEmail,
+  createStripeSession,
+  stripeWebhook,
+  getUserTickets,
+  downloadTicket,
 };

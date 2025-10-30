@@ -16,6 +16,7 @@ router.get("/", eventController.getEvents);
 router.get("/similar/:id", eventController.getSimilarEvents);
 router.get("/latest", eventController.getLatestEvents);
 router.get("/:id", eventController.getEventById);
+router.put("/:id", upload.single("image"), eventController.updateEvent);
 
 // Comprar ticket
 router.post("/buy/ticket", eventController.buyTicket);

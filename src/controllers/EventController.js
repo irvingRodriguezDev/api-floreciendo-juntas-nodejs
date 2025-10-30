@@ -214,6 +214,91 @@ const getEventById = async (req, res) => {
   }
 };
 
+const updateEvent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      location,
+      map,
+      startDate,
+      endDate,
+      time,
+      totalTickets,
+      price,
+    } = req.body;
+
+    // 1️⃣ Buscar el evento
+    const event = await Event.findByPk(id);
+    if (!event) {
+      return res.status(404).json({ message: "Evento no encontrado" });
+    }
+
+    // Guardamos el total de tickets anterior
+    const previousTotalTickets = event.totalTickets;
+
+    // 2️⃣ Actualizar campos
+    if (title) {
+      event.title = title;
+      event.slug = slugify(title, { lower: true, strict: true });
+    }
+    if (description !== undefined) event.description = description;
+    if (location) event.location = location;
+    if (map !== undefined) event.map = map;
+    if (startDate) event.startDate = startDate;
+    if (endDate !== undefined) event.endDate = endDate;
+    if (time) event.time = time;
+    if (totalTickets !== undefined) event.totalTickets = totalTickets;
+    if (price !== undefined) event.price = price;
+
+    // 3️⃣ Si se envía nueva imagen, subir a S3
+    if (req.file) {
+      const s3Url = await uploadToS3("events", req.file, event.id);
+      event.image = s3Url;
+    }
+
+    // 4️⃣ Guardar cambios antes de manejar tickets
+    await event.save();
+
+    // 5️⃣ Ajustar tickets
+    if (totalTickets !== undefined && totalTickets !== previousTotalTickets) {
+      if (totalTickets > previousTotalTickets) {
+        // Crear tickets nuevos
+        const ticketsToCreate = totalTickets - previousTotalTickets;
+        const newTickets = [];
+        for (let i = 0; i < ticketsToCreate; i++) {
+          newTickets.push({
+            code: uuidv4(),
+            eventId: event.id,
+          });
+        }
+        await Ticket.bulkCreate(newTickets);
+      } else {
+        // Reducir tickets disponibles (solo los que no han sido vendidos)
+        const ticketsToDelete = previousTotalTickets - totalTickets;
+        const unsoldTickets = await Ticket.findAll({
+          where: { eventId: event.id, sold: 0 },
+          order: [["createdAt", "DESC"]],
+          limit: ticketsToDelete,
+        });
+        const idsToDelete = unsoldTickets.map((t) => t.id);
+        if (idsToDelete.length > 0) {
+          await Ticket.destroy({ where: { id: idsToDelete } });
+        }
+      }
+    }
+
+    res.status(200).json({
+      message: "Evento actualizado correctamente",
+      event,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error actualizando el evento" });
+  }
+};
+
 // Comprar un ticket
 const buyTicket = async (req, res) => {
   const t = await sequelize.transaction();
@@ -287,7 +372,7 @@ const buyTicket = async (req, res) => {
         buyerEmail,
       },
       success_url: `${process.env.CLIENT_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/cancel`,
+      cancel_url: `${process.env.CLIENT_URL}/error`,
     });
 
     // Commit de la transacción — la reserva quedó persistida
@@ -354,4 +439,5 @@ module.exports = {
   createEvent,
   getLatestEvents,
   getSimilarEvents,
+  updateEvent,
 };

@@ -1,6 +1,7 @@
 const cron = require("node-cron");
-const { Ticket, sequelize } = require("../models");
-
+const { Ticket } = require("../models");
+const sequelize = require("../config/db");
+const { Op } = require("sequelize");
 // Ejecutar cada hora
 const RELEASE_CRON = "0 * * * *"; // minuto 0 de cada hora
 const RESERVATION_MINUTES = 15; // duración máxima de reserva en minutos
@@ -19,7 +20,7 @@ const releaseExpiredReservations = async () => {
       {
         where: {
           reserved: true,
-          reservation_expires_at: { [sequelize.Op.lt]: now },
+          reservation_expires_at: { [Op.lt]: now },
         },
       }
     );
