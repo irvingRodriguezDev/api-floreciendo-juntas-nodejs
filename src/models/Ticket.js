@@ -33,6 +33,10 @@ const Ticket = sequelize.define("Ticket", {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  scannedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
 });
 
 // Relación: un evento tiene muchos tickets

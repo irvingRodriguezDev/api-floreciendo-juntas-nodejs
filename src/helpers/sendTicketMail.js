@@ -1,6 +1,10 @@
 const nodemailer = require("nodemailer");
 const { Event } = require("../models");
-
+const {
+  generateCalendarLinks,
+  saveICSToS3,
+  generateCalendarButtonsHTML,
+} = require("./generateCalendarLinks");
 const sendTicketEmail = async (email, qrUrl, ticket) => {
   const event = await Event.findByPk(ticket.eventId);
   const sender = process.env.SENGRID_FROM;

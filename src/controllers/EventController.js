@@ -8,10 +8,15 @@ const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
 const { Op, json, literal } = require("sequelize");
 const stripe = require("../config/stripe");
+const moment = require("moment-timezone");
+
 // Crear un evento y generar tickets
 const RESERVATION_MINUTES = 15;
 const SEARCH_LIMIT = 50;
 const createEvent = async (req, res) => {
+  // Iniciar transacción
+  const t = await sequelize.transaction();
+
   try {
     const {
       title,
@@ -26,32 +31,57 @@ const createEvent = async (req, res) => {
     } = req.body;
 
     if (!title || !location || !startDate || !time || !totalTickets || !price) {
+      await t.rollback();
       return res.status(400).json({ message: "Faltan campos obligatorios" });
     }
 
-    // Crear evento primero sin la imagen
-    const slug = slugify(title, { lower: true, strict: true });
-    const event = await Event.create({
-      title,
-      slug,
-      description,
-      location,
-      map,
-      startDate,
-      endDate,
-      time,
-      totalTickets,
-      price, // se convertirá a centavos si usamos el setter
-    });
+    // Crear fecha en zona horaria de México
+    const startDateTime = moment
+      .tz(`${startDate} ${time}`, "YYYY-MM-DD HH:mm", "America/Mexico_City")
+      .toDate();
 
-    // Si se envió archivo, subir a S3 y actualizar
-    if (req.file) {
-      const s3Url = await uploadToS3("events", req.file, event.id);
-      event.image = s3Url;
-      await event.save();
+    let endDateTime = null;
+    if (endDate) {
+      endDateTime = moment
+        .tz(`${endDate} ${time}`, "YYYY-MM-DD HH:mm", "America/Mexico_City")
+        .toDate();
     }
 
-    // Generar tickets
+    // Crear evento dentro de la transacción
+    const slug = slugify(title, { lower: true, strict: true });
+    const event = await Event.create(
+      {
+        title,
+        slug,
+        description,
+        location,
+        map,
+        startDate: startDateTime,
+        endDate: endDateTime,
+        time,
+        totalTickets,
+        price,
+      },
+      { transaction: t }
+    );
+
+    // Si se envió archivo, subir a S3 ANTES de crear tickets
+    if (req.file) {
+      try {
+        const s3Url = await uploadToS3("events", req.file, event.id);
+        event.image = s3Url;
+        await event.save({ transaction: t });
+      } catch (s3Error) {
+        console.error("Error subiendo a S3:", s3Error);
+        await t.rollback();
+        return res.status(500).json({
+          message: "Error subiendo la imagen a S3",
+          error: s3Error.message,
+        });
+      }
+    }
+
+    // Generar tickets dentro de la transacción
     const tickets = [];
     for (let i = 0; i < totalTickets; i++) {
       tickets.push({
@@ -59,15 +89,25 @@ const createEvent = async (req, res) => {
         eventId: event.id,
       });
     }
-    await Ticket.bulkCreate(tickets);
+    await Ticket.bulkCreate(tickets, { transaction: t });
 
-    res.status(201).json({ event, ticketsCreated: totalTickets });
+    // ✅ Si todo salió bien, confirmar la transacción
+    await t.commit();
+
+    res.status(201).json({
+      event,
+      ticketsCreated: totalTickets,
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error creando el evento" });
+    // ❌ Si algo falla, revertir TODO
+    await t.rollback();
+    console.error("Error creando evento:", error);
+    res.status(500).json({
+      message: "Error creando el evento",
+      error: error.message,
+    });
   }
 };
-
 // Listar todos los eventos
 
 const getEvents = async (req, res) => {
@@ -215,6 +255,8 @@ const getEventById = async (req, res) => {
 };
 
 const updateEvent = async (req, res) => {
+  const t = await sequelize.transaction();
+
   try {
     const { id } = req.params;
     const {
@@ -229,16 +271,16 @@ const updateEvent = async (req, res) => {
       price,
     } = req.body;
 
-    // 1️⃣ Buscar el evento
-    const event = await Event.findByPk(id);
+    // Buscar el evento
+    const event = await Event.findByPk(id, { transaction: t });
     if (!event) {
+      await t.rollback();
       return res.status(404).json({ message: "Evento no encontrado" });
     }
 
-    // Guardamos el total de tickets anterior
     const previousTotalTickets = event.totalTickets;
 
-    // 2️⃣ Actualizar campos
+    // Actualizar campos
     if (title) {
       event.title = title;
       event.slug = slugify(title, { lower: true, strict: true });
@@ -246,25 +288,58 @@ const updateEvent = async (req, res) => {
     if (description !== undefined) event.description = description;
     if (location) event.location = location;
     if (map !== undefined) event.map = map;
-    if (startDate) event.startDate = startDate;
-    if (endDate !== undefined) event.endDate = endDate;
+
+    if (startDate) {
+      const timeToUse = time || event.time || "00:00";
+      event.startDate = moment
+        .tz(
+          `${startDate} ${timeToUse}`,
+          "YYYY-MM-DD HH:mm",
+          "America/Mexico_City"
+        )
+        .toDate();
+    }
+
+    if (endDate !== undefined) {
+      if (endDate) {
+        const timeToUse = time || event.time || "00:00";
+        event.endDate = moment
+          .tz(
+            `${endDate} ${timeToUse}`,
+            "YYYY-MM-DD HH:mm",
+            "America/Mexico_City"
+          )
+          .toDate();
+      } else {
+        event.endDate = null;
+      }
+    }
+
     if (time) event.time = time;
     if (totalTickets !== undefined) event.totalTickets = totalTickets;
     if (price !== undefined) event.price = price;
 
-    // 3️⃣ Si se envía nueva imagen, subir a S3
+    // Si se envía nueva imagen, subir a S3
     if (req.file) {
-      const s3Url = await uploadToS3("events", req.file, event.id);
-      event.image = s3Url;
+      try {
+        const s3Url = await uploadToS3("events", req.file, event.id);
+        event.image = s3Url;
+      } catch (s3Error) {
+        console.error("Error subiendo a S3:", s3Error);
+        await t.rollback();
+        return res.status(500).json({
+          message: "Error subiendo la imagen a S3",
+          error: s3Error.message,
+        });
+      }
     }
 
-    // 4️⃣ Guardar cambios antes de manejar tickets
-    await event.save();
+    // Guardar cambios
+    await event.save({ transaction: t });
 
-    // 5️⃣ Ajustar tickets
+    // Ajustar tickets
     if (totalTickets !== undefined && totalTickets !== previousTotalTickets) {
       if (totalTickets > previousTotalTickets) {
-        // Crear tickets nuevos
         const ticketsToCreate = totalTickets - previousTotalTickets;
         const newTickets = [];
         for (let i = 0; i < ticketsToCreate; i++) {
@@ -273,29 +348,39 @@ const updateEvent = async (req, res) => {
             eventId: event.id,
           });
         }
-        await Ticket.bulkCreate(newTickets);
+        await Ticket.bulkCreate(newTickets, { transaction: t });
       } else {
-        // Reducir tickets disponibles (solo los que no han sido vendidos)
         const ticketsToDelete = previousTotalTickets - totalTickets;
         const unsoldTickets = await Ticket.findAll({
           where: { eventId: event.id, sold: 0 },
           order: [["createdAt", "DESC"]],
           limit: ticketsToDelete,
+          transaction: t,
         });
         const idsToDelete = unsoldTickets.map((t) => t.id);
         if (idsToDelete.length > 0) {
-          await Ticket.destroy({ where: { id: idsToDelete } });
+          await Ticket.destroy({
+            where: { id: idsToDelete },
+            transaction: t,
+          });
         }
       }
     }
+
+    // Confirmar transacción
+    await t.commit();
 
     res.status(200).json({
       message: "Evento actualizado correctamente",
       event,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error actualizando el evento" });
+    await t.rollback();
+    console.error("Error actualizando evento:", error);
+    res.status(500).json({
+      message: "Error actualizando el evento",
+      error: error.message,
+    });
   }
 };
 

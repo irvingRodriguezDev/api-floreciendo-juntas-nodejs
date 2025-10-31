@@ -236,10 +236,70 @@ const downloadTicket = async (req, res) => {
   }
 };
 
+const validateTicket = async (req, res) => {
+  try {
+    const { code } = req.body;
+
+    // return res.json(code);
+
+    if (!code) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "El code es requerido" });
+    }
+
+    // Buscar el boleto
+    const ticket = await Ticket.findOne({ where: { code } });
+
+    if (!ticket) {
+      return res
+        .status(404)
+        .json({ status: "error", message: "Boleto no encontrado" });
+    }
+
+    if (ticket.scanned) {
+      return res.status(409).json({
+        status: "error",
+        message: "Boleto ya fue escaneado",
+        scannedAt: ticket.scannedAt,
+      });
+    }
+
+    // Marcar como escaneado con timestamp
+    ticket.scanned = true;
+    ticket.scannedAt = new Date();
+    await ticket.save();
+
+    // Log opcional
+    console.log(
+      `Boleto validado: ${ticket.code} - ID: ${ticket.id} - ${ticket.scannedAt}`
+    );
+
+    return res.status(200).json({
+      status: "success",
+      message: "Boleto válido",
+      ticket: {
+        id: ticket.id,
+        code: ticket.code,
+        scannedAt: ticket.scannedAt,
+        buyerEmail: ticket.buyerEmail || null, // si tienes otros campos
+      },
+    });
+  } catch (error) {
+    console.error("Error validando boleto:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Error interno del servidor",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   sendTicketEmail,
   createStripeSession,
   stripeWebhook,
   getUserTickets,
   downloadTicket,
+  validateTicket,
 };
