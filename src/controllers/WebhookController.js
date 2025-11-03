@@ -1,6 +1,5 @@
 const stripe = require("../config/stripe");
-const { Subscription, User, Ticket } = require("../models");
-const generateTicketPDF = require("../helpers/generateTicketPdf");
+const { Subscription, User, Ticket, Event } = require("../models");
 const sendTicketEmail = require("../helpers/sendTicketMail");
 const subscriptionEndpointSecret =
   process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET;
@@ -149,9 +148,11 @@ const handleTicketStripeWebhook = async (req, res) => {
       const { ticketId, eventId, buyerName, buyerEmail } = session.metadata;
 
       const ticketIdNumber = parseInt(ticketId, 10);
-
+      const eventIdNumber = parseInt(eventId, 10);
       // Buscar ticket reservado
       const ticket = await Ticket.findByPk(ticketIdNumber);
+      const evento = await Event.findByPk(eventIdNumber);
+      const usuario = await User.findOne({ where: { email: buyerEmail } });
 
       // Stripe reintentará este evento si no recibe un 2xx.
       if (!ticket) {
@@ -178,13 +179,9 @@ const handleTicketStripeWebhook = async (req, res) => {
         });
       }
 
-      // 1. Generar QR y subir a S3
-      // La función 'generateTicketQR' ya retorna la URL pública (la corrección anterior)
-      const publicUrl = await generateTicketPDF(ticket);
-
       // 2. Enviar correo con la URL
       // Usamos el 'buyerEmail' de la sesión de Stripe, que es la fuente de verdad del pago.
-      await sendTicketEmail(buyerEmail, publicUrl, ticket);
+      await sendTicketEmail(ticket, evento, usuario);
 
       console.log(
         `🎟️ Ticket #${ticket.id} confirmado y enviado a ${buyerEmail}`

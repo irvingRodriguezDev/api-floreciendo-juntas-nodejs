@@ -84,34 +84,6 @@ const stripeWebhook = async (req, res) => {
   res.json({ received: true });
 };
 
-// Generar PDF con QR
-const generateTicketPDF = async (ticket) => {
-  const doc = new PDFDocument({ size: "A6", layout: "landscape" });
-  const filePath = path.join(__dirname, `../tickets/${ticket.code}.pdf`);
-  doc.pipe(fs.createWriteStream(filePath));
-
-  doc
-    .fontSize(20)
-    .fillColor("#E53888")
-    .text("Boleto Evento 🎟️", { align: "center" });
-  doc.moveDown();
-  doc.fontSize(14).fillColor("black").text(`Nombre: ${ticket.buyerName}`);
-  doc.text(`Evento: ${ticket.Event.title}`);
-  doc.text(`Fecha: ${ticket.Event.date.toLocaleDateString()}`);
-  doc.text(`Hora: ${ticket.Event.time}`);
-  doc.text(`Lugar: ${ticket.Event.location}`);
-  doc.text(`Precio: $${(ticket.Event.price / 100).toFixed(2)} MXN`);
-  doc.text(`Código: ${ticket.code}`);
-  doc.text(`Estado: ${ticket.sold ? "Pagado" : "Disponible"}`);
-  doc.moveDown();
-
-  const qrData = `ticket:${ticket.code}`;
-  const qrImage = await QRCode.toDataURL(qrData);
-  doc.image(qrImage, { width: 100, align: "center" });
-
-  doc.end();
-};
-
 // Enviar correo con PDF
 const sendTicketEmail = async (ticket) => {
   const transporter = nodemailer.createTransport({

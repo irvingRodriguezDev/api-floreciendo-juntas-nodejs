@@ -6,6 +6,8 @@ const {
 } = require("./generateCalendarLinks");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("./getS3Url");
+const nodemailer = require("nodemailer");
+const sender = process.env.SENGRID_FROM;
 
 /**
  * 📧 Envía el ticket por email con opciones de calendario
@@ -27,9 +29,13 @@ const sendTicketEmail = async (ticket, event, user) => {
 
     // 4. Generar HTML de botones
     const calendarButtonsHTML = generateCalendarButtonsHTML(calendarLinks);
-
+    const transporter = nodemailer.createTransport({
+      service: "SendGrid",
+      auth: { user: "apikey", pass: process.env.SENDGRID_API_KEY },
+    });
     // 5. Enviar email
-    await sendEmail({
+    const mailOptions = {
+      from: sender,
       to: user.email,
       subject: `🎟️ Tu boleto para ${event.title}`,
       html: `
@@ -106,9 +112,10 @@ const sendTicketEmail = async (ticket, event, user) => {
         </body>
         </html>
       `,
-    });
+    };
 
     console.log(`✅ Email enviado a ${user.email} con opciones de calendario`);
+    await transporter.sendMail(mailOptions);
     return { pdfUrl, icsUrl, calendarLinks };
   } catch (error) {
     console.error("Error enviando ticket por email:", error);

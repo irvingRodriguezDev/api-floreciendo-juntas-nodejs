@@ -295,7 +295,7 @@ const generateTicketHTML = (ticket, event, user) => {
 const generateTicketPDF = async (ticket) => {
   const event = await Event.findByPk(ticket.eventId);
   const user = await User.findOne({
-    where: { email: ticket.buyerEmail.toLowerCase() },
+    where: { email: ticket.buyerEmail },
   });
 
   if (!event || !user) throw new Error("Evento o usuario no encontrado");
