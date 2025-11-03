@@ -3,7 +3,7 @@ const moment = require("moment-timezone");
 /**
  * 📅 Genera enlaces para agregar evento a diferentes calendarios
  */
-const generateCalendarLinks = (event, ticketUrl) => {
+const generateCalendarLinks = (event, ticketUrl, ticketId) => {
   // Formatear fechas para calendarios (ISO 8601 sin guiones ni dos puntos)
   const startDate = moment(event.startDate)
     .tz("America/Mexico_City")
@@ -14,27 +14,45 @@ const generateCalendarLinks = (event, ticketUrl) => {
     ? moment(event.endDate).tz("America/Mexico_City").format("YYYYMMDDTHHmmss")
     : moment(event.startDate)
         .tz("America/Mexico_City")
-        .add(2, "hours")
+        .add(12, "hours")
         .format("YYYYMMDDTHHmmss");
+
+  // Limpiar descripción de HTML
+  const cleanDescription = event.description
+    ? event.description
+        .replace(/<[^>]*>/g, "") // Eliminar todas las etiquetas HTML
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/\r\n/g, "\n")
+        .trim()
+    : "";
 
   const title = encodeURIComponent(event.title);
   const location = encodeURIComponent(event.location || "Por confirmar");
   const description = encodeURIComponent(
-    `${event.description || ""}\n\nTu boleto: ${ticketUrl}\n\nPor favor presenta tu boleto al ingresar al evento.`
+    `${cleanDescription}\n\nTu boleto: ${ticketUrl}\n\nPor favor presenta tu boleto al ingresar al evento.`
   );
+
+  // URL base del backend para descargar el .ics
+  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
 
   return {
     // 🟢 Google Calendar
     google: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startDate}/${endDate}&details=${description}&location=${location}&ctz=America/Mexico_City`,
 
-    // 🍎 Apple Calendar / iCal / Outlook (archivo .ics)
-    ics: generateICSFile(event, ticketUrl),
+    // 🍎 Apple Calendar / iCal (descarga archivo .ics)
+    apple: `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`,
 
     // 🔵 Outlook.com
     outlook: `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${event.startDate}&enddt=${event.endDate || event.startDate}&location=${location}&body=${description}&path=/calendar/action/compose&rru=addevent`,
 
     // 🟣 Yahoo Calendar
     yahoo: `https://calendar.yahoo.com/?v=60&title=${title}&st=${startDate}&et=${endDate}&desc=${description}&in_loc=${location}`,
+
+    // 📥 Descarga directa ICS
+    ics: `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`,
   };
 };
 
@@ -54,6 +72,18 @@ const generateICSFile = (event, ticketUrl) => {
         .format("YYYYMMDDTHHmmss");
 
   const now = moment().format("YYYYMMDDTHHmmss");
+
+  // Limpiar descripción de HTML
+  const cleanDescription = event.description
+    ? event.description
+        .replace(/<[^>]*>/g, "") // Eliminar todas las etiquetas HTML
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/\r\n/g, "\n")
+        .trim()
+    : "";
 
   // Escape de caracteres especiales en ICS
   const escapeICS = (str) => {
@@ -92,7 +122,7 @@ DTSTAMP:${now}Z
 DTSTART;TZID=America/Mexico_City:${startDate}
 DTEND;TZID=America/Mexico_City:${endDate}
 SUMMARY:${escapeICS(event.title)}
-DESCRIPTION:${escapeICS(event.description || "")}\\n\\nTu boleto: ${ticketUrl}\\n\\nPor favor presenta tu boleto al ingresar al evento.
+DESCRIPTION:${escapeICS(cleanDescription)}\\n\\nTu boleto: ${ticketUrl}\\n\\nPor favor presenta tu boleto xd al ingresar al evento.
 LOCATION:${escapeICS(event.location || "Por confirmar")}
 STATUS:CONFIRMED
 SEQUENCE:0
@@ -143,7 +173,7 @@ const generateCalendarButtonsHTML = (calendarLinks) => {
           📅 Google Calendar
         </a>
         
-        <a href="${calendarLinks.ics}" 
+        <a href="${calendarLinks.apple}" 
            download="evento.ics"
            style="background: #000000; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
           🍎 Apple Calendar

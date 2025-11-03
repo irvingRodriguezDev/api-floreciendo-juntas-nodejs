@@ -128,7 +128,7 @@ const getCourses = async (req, res) => {
 
     const formatted = courses.map((c) => ({
       ...c.toJSON(),
-      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
+      cover_image_url: c.images?.[0] ? c.images[0].s3_key : null,
       certificate_url: c.certificates?.[0]
         ? getS3Url(c.certificates[0].s3_key_certificate)
         : null,
@@ -179,9 +179,7 @@ const getNewCourses = async (req, res) => {
       const data = course.toJSON();
 
       // Imagen de portada (solo la primera activa)
-      const coverImageUrl = data.images?.[0]
-        ? getS3Url(data.images[0].s3_key)
-        : null;
+      const coverImageUrl = data.images?.[0] ? data.images[0].s3_key : null;
 
       // Progreso del usuario (si existe)
       const userProgress =
@@ -402,7 +400,7 @@ const getTopViewedCourses = async (req, res) => {
     // return res.json(topCourses);
     const formatted = topCourses.map((c) => ({
       ...c.toJSON(),
-      cover_image_url: c.course ? getS3Url(c.course.images[0].s3_key) : null,
+      cover_image_url: c.course ? c.course.images[0].s3_key : null,
       title: c.course ? c.course.title : null,
     }));
 

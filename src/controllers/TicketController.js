@@ -8,6 +8,8 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
 const sequelize = require("../config/db");
 const { Op, json, literal } = require("sequelize");
+const { generateCalendarLinks } = require("../helpers/generateCalendarLinks");
+const getS3Url = require("../helpers/getS3Url");
 // Crear sesión de pago con Stripe
 const createStripeSession = async (req, res) => {
   try {
@@ -295,6 +297,39 @@ const validateTicket = async (req, res) => {
   }
 };
 
+const generateLinks = async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+
+    // Buscar ticket con su evento
+    const ticket = await Ticket.findByPk(ticketId, {
+      include: [{ model: Event }],
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket no encontrado" });
+    }
+
+    const event = ticket.Event;
+
+    // ✅ CORRECCIÓN: Construir ticketUrl correctamente
+    const ticketUrl = getS3Url(
+      `/${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticket.id}`
+    );
+
+    // Generar todos los links de calendario
+    const calendarLinks = generateCalendarLinks(event, ticketUrl, ticketId);
+
+    res.json(calendarLinks);
+  } catch (error) {
+    console.error("Error generando links de calendario:", error);
+    res.status(500).json({
+      message: "Error generando links de calendario",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   sendTicketEmail,
   createStripeSession,
@@ -302,4 +337,5 @@ module.exports = {
   getUserTickets,
   downloadTicket,
   validateTicket,
+  generateLinks,
 };

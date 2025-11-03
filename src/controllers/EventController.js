@@ -9,6 +9,7 @@ const sequelize = require("../config/db");
 const { Op, json, literal } = require("sequelize");
 const stripe = require("../config/stripe");
 const moment = require("moment-timezone");
+const { generateICSFile } = require("../helpers/generateCalendarLinks");
 
 // Crear un evento y generar tickets
 const RESERVATION_MINUTES = 15;
@@ -112,8 +113,6 @@ const createEvent = async (req, res) => {
 
 const getEvents = async (req, res) => {
   try {
-    res.set("Cache-Control", "no-store"); // evita 304
-
     const search = (req.query.search || "").trim();
 
     // Campos esenciales del evento + COUNT de tickets libres
@@ -154,7 +153,7 @@ const getEvents = async (req, res) => {
 
       const formatted = events.map((event) => ({
         ...event.toJSON(),
-        image: event.image ? getS3Url(event.image) : null,
+        image: event.image ?? null,
         availableTickets: parseInt(event.get("availableTickets"), 10),
       }));
 
@@ -181,7 +180,7 @@ const getEvents = async (req, res) => {
 
     const formatted = rows.map((event) => ({
       ...event.toJSON(),
-      image: event.image ? getS3Url(event.image) : null,
+      image: event.image ? event.image : null,
       availableTickets: parseInt(event.get("availableTickets"), 10),
     }));
 
@@ -204,9 +203,9 @@ const getLatestEvents = async (req, res) => {
       limit: 4,
       order: [["createdAt", "DESC"]],
     });
-    const formatted = events.map((c) => ({
-      ...c.toJSON(),
-      image: c.image ? getS3Url(c.image) : null,
+    const formatted = events.map((e) => ({
+      ...e.toJSON(),
+      image: e.image ? e.image : null,
     }));
     return res.status(200).json({
       success: true,
@@ -243,7 +242,7 @@ const getEventById = async (req, res) => {
     // Formatear respuesta
     const formattedEvent = {
       ...event.toJSON(),
-      image: event.image ? getS3Url(event.image) : null,
+      image: event.image ? event.image : null,
       availableTickets, // ✅ cantidad de tickets disponibles
     };
 
@@ -499,7 +498,7 @@ const getSimilarEvents = async (req, res) => {
     // 3️⃣ Formatear imágenes S3
     const formatted = similarEvents.map((event) => ({
       ...event.toJSON(),
-      image: event.image ? getS3Url(event.image) : null,
+      image: event.image ? event.image : null,
     }));
 
     res.json({
@@ -507,13 +506,48 @@ const getSimilarEvents = async (req, res) => {
         id: mainEvent.id,
         title: mainEvent.title,
         location: mainEvent.location,
-        image: mainEvent.image ? getS3Url(mainEvent.image) : null,
+        image: mainEvent.image ? mainEvent.image : null,
       },
       similarEvents: formatted,
     });
   } catch (error) {
     console.error("Error obteniendo eventos similares:", error);
     res.status(500).json({ message: "Error obteniendo eventos similares" });
+  }
+};
+
+const downloadIcsFile = async (req, res) => {
+  try {
+    const { eventId, ticketId } = req.params;
+
+    // Buscar el evento
+    const event = await Event.findByPk(eventId);
+
+    if (!event) {
+      return res.status(404).json({ message: "Evento no encontrado" });
+    }
+
+    // Generar contenido del archivo .ics
+    const ticketUrl = getS3Url(
+      `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticketId}`
+    );
+    const icsContent = generateICSFile(event, ticketUrl);
+
+    // Configurar headers para descarga
+    res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${event.slug}.ics"`
+    );
+
+    // Enviar el contenido
+    res.send(icsContent);
+  } catch (error) {
+    console.error("Error generando archivo ICS:", error);
+    res.status(500).json({
+      message: "Error generando archivo de calendario",
+      error: error.message,
+    });
   }
 };
 
@@ -525,4 +559,5 @@ module.exports = {
   getLatestEvents,
   getSimilarEvents,
   updateEvent,
+  downloadIcsFile,
 };

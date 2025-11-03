@@ -15,6 +15,7 @@ router.post(
 router.get("/", eventController.getEvents);
 router.get("/similar/:id", eventController.getSimilarEvents);
 router.get("/latest", eventController.getLatestEvents);
+router.get("/:eventId/:ticketId/calendar", eventController.downloadIcsFile);
 router.get("/:id", eventController.getEventById);
 router.put("/:id", upload.single("image"), eventController.updateEvent);
 
