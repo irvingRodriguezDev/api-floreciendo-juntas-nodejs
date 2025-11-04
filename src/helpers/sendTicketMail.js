@@ -39,23 +39,28 @@ const sendTicketEmail = async (ticket, event, user) => {
       to: user.email,
       subject: `🎟️ Tu boleto para ${event.title}`,
       html: `
-        <!DOCTYPE html>
+       <!DOCTYPE html>
         <html>
+            
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.6; color: #374151; max-width: 600px; margin: 0 auto; padding: 20px;">
-          
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+            
+        <body
+          style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.6; color: #374151; max-width: 600px; margin: 0 auto; padding: 20px;">
+            
+          <div
+            style="background: linear-gradient(135deg, #E36F9E 0%, #EFABC6 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
             <h1 style="color: white; margin: 0; font-size: 28px;">🎉 ¡Gracias por tu compra!</h1>
           </div>
-          
-          <div style="background: white; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+            
+          <div
+            style="background: white; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
             
             <p style="font-size: 16px;">Hola <strong>${user.name || "Invitado"}</strong>,</p>
             
-            <p style="font-size: 16px;">Tu boleto para <strong style="color: #667eea;">${event.title}</strong> está listo.</p>
+            <p style="font-size: 16px;">Tu boleto para <strong style="color: #EC4899;">${event.title}</strong> está listo.</p>
             
             <!-- Información del evento -->
             <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -76,13 +81,15 @@ const sendTicketEmail = async (ticket, event, user) => {
                 timeZone: "America/Mexico_City",
               })}</p>
               ${event.location ? `<p style="margin: 5px 0;"><strong>📍 Lugar:</strong> ${event.location}</p>` : ""}
-              <p style="margin: 5px 0;"><strong>🎫 Código:</strong> <code style="background: #e5e7eb; padding: 4px 8px; border-radius: 4px; font-family: monospace;">${ticket.code}</code></p>
+              <p style="margin: 5px 0;"><strong>🎫 Código:</strong> <code
+                  style="background: #e5e7eb; padding: 4px 8px; border-radius: 4px; font-family: monospace;">${ticket.code}</code>
+              </p>
             </div>
             
             <!-- Botón de descarga del ticket -->
             <div style="text-align: center; margin: 30px 0;">
-              <a href="${pdfUrl}" 
-                 style="background: #ec4899; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(236, 72, 153, 0.3);">
+              <a href="${pdfUrl}"
+                style="background: #ec4899; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(236, 72, 153, 0.3);">
                 📄 Descargar mi boleto PDF
               </a>
             </div>
@@ -90,7 +97,8 @@ const sendTicketEmail = async (ticket, event, user) => {
             ${calendarButtonsHTML}
             
             <!-- Instrucciones -->
-            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <div
+              style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
               <p style="margin: 0; color: #92400e; font-size: 14px;">
                 <strong>⚠️ Importante:</strong> Presenta este boleto (PDF o en tu teléfono) al ingresar al evento.
               </p>
@@ -108,8 +116,9 @@ const sendTicketEmail = async (ticket, event, user) => {
             </p>
             
           </div>
-          
+            
         </body>
+            
         </html>
       `,
     };

@@ -22,7 +22,8 @@ const createPayment = async (req, res) => {
     }
 
     // 3. Determinar modo
-    const isRecurring = priceId === process.env.STRIPE_PRICE_RECURRING;
+    const recurringPrices = [process.env.STRIPE_PRICE_RECURRING]; // puedes agregar más
+    const isRecurring = recurringPrices.includes(priceId);
     const mode = isRecurring ? "subscription" : "payment";
     const subscriptionType = isRecurring ? "RECURRING" : "ONETIME";
 
@@ -31,16 +32,15 @@ const createPayment = async (req, res) => {
       customer: customerId,
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      mode: mode,
+      mode,
       metadata: {
         userId: userId.toString(),
         priceId,
         subscriptionType,
       },
       client_reference_id: userId.toString(),
-      success_url:
-        process.env.CLIENT_URL + "/success?session_id={CHECKOUT_SESSION_ID}",
-      cancel_url: process.env.CLIENT_URL + "/cancel",
+      success_url: `${process.env.CLIENT_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
     console.log("Checkout Session creada:", session.id);
@@ -48,10 +48,11 @@ const createPayment = async (req, res) => {
     // 5. Guardar registro temporal en DB
     await Subscription.create({
       stripe_checkout_session_id: session.id,
+      stripe_customer_id: customerId,
       subscription_type: subscriptionType,
       price_id: priceId,
-      userId: userId,
-      status: "pending", // estado inicial seguro
+      userId,
+      status: "pending",
     });
 
     res.status(200).json({ id: session.id, url: session.url });

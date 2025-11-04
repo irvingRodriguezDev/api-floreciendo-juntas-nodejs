@@ -109,45 +109,55 @@ const sendTicketEmail = async (ticket) => {
 const getUserTickets = async (req, res) => {
   try {
     const { userId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
 
-    const user = await User.findByPk(userId);
     if (!userId) {
       return res
         .status(400)
         .json({ message: "El ID del usuario es requerido" });
     }
 
-    const today = new Date();
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
 
-    // Buscar boletos vendidos, del usuario, y cuyo evento sigue vigente
-    const tickets = await Ticket.findAll({
-      where: {
-        buyerEmail: user.email,
-        sold: true,
-      },
-      include: [
-        {
-          model: Event,
-          as: "Event",
-          where: {
-            [Op.or]: [
-              { startDate: { [Op.gte]: today } }, // eventos que empiezan hoy o después
-              { endDate: { [Op.gte]: today } }, // eventos que no han terminado
+    const today = new Date();
+    const offset = (page - 1) * limit;
+
+    // Buscar boletos vendidos del usuario, de eventos vigentes
+    const { rows: tickets, count: totalTickets } = await Ticket.findAndCountAll(
+      {
+        where: {
+          buyerEmail: user.email,
+          sold: true,
+        },
+        include: [
+          {
+            model: Event,
+            as: "Event",
+            where: {
+              [Op.or]: [
+                { startDate: { [Op.gte]: today } }, // eventos que empiezan hoy o después
+                { endDate: { [Op.gte]: today } }, // eventos que no han terminado
+              ],
+            },
+            attributes: [
+              "id",
+              "title",
+              "location",
+              "startDate",
+              "endDate",
+              "image",
+              "price",
             ],
           },
-          attributes: [
-            "id",
-            "title",
-            "location",
-            "startDate",
-            "endDate",
-            "image",
-            "price",
-          ],
-        },
-      ],
-      order: [["createdAt", "DESC"]],
-    });
+        ],
+        order: [["createdAt", "DESC"]],
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+      }
+    );
 
     if (tickets.length === 0) {
       return res
@@ -155,19 +165,33 @@ const getUserTickets = async (req, res) => {
         .json({ message: "No se encontraron boletos vigentes" });
     }
 
-    res.status(200).json({ tickets });
+    const totalPages = Math.ceil(totalTickets / limit);
+
+    res.status(200).json({
+      tickets,
+      currentPage: parseInt(page),
+      totalPages,
+      totalTickets,
+      limit: parseInt(limit),
+    });
   } catch (error) {
-    console.error(error);
+    console.error("Error al obtener boletos del usuario:", error);
     res.status(500).json({ message: "Error al obtener boletos del usuario" });
   }
 };
 
 const downloadTicket = async (req, res) => {
   try {
-    const { ticketId } = req.query;
-    const { userId } = req; // si usas middleware de auth
+    const { ticketId, userId } = req.query;
+
+    if (!ticketId) {
+      return res.status(400).json({ message: "El ID del boleto es requerido" });
+    }
 
     const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
 
     const ticket = await Ticket.findOne({
       where: { id: ticketId, buyerEmail: user.email, sold: true },
@@ -175,7 +199,7 @@ const downloadTicket = async (req, res) => {
         {
           model: Event,
           as: "event",
-          where: { endDate: { [Op.gte]: new Date() } },
+          where: { endDate: { [Op.gte]: new Date() } }, // evento vigente
         },
       ],
     });
@@ -186,26 +210,23 @@ const downloadTicket = async (req, res) => {
         .json({ message: "Boleto no encontrado o evento expirado" });
     }
 
-    // Si ya existe el PDF en S3, lo devolvemos
-    if (ticket.pdfUrl) {
-      return res.status(200).json({ downloadUrl: ticket.pdfUrl });
+    // Obtener la URL del PDF desde S3
+    const pdfUrl = await getS3Url(
+      process.env.AWS_S3_ENVIRONMENT,
+      "tickets",
+      `${ticket.id}`
+    );
+
+    if (!pdfUrl) {
+      return res
+        .status(404)
+        .json({ message: "Archivo del boleto no encontrado en S3" });
     }
 
-    // Si no, lo generamos
-    const pdfBuffer = await generateTicketPDF(ticket);
-    // Aquí podrías subirlo a S3:
-    // const pdfUrl = await uploadToS3("tickets", pdfBuffer, `${ticket.code}.pdf`);
-    // ticket.pdfUrl = pdfUrl;
-    // await ticket.save();
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=ticket-${ticket.code}.pdf`
-    );
-    res.send(pdfBuffer);
+    // Retornar la URL para descarga directa en el frontend
+    return res.status(200).json({ downloadUrl: pdfUrl });
   } catch (error) {
-    console.error(error);
+    console.error("Error al descargar el boleto:", error);
     res.status(500).json({ message: "Error al descargar el boleto" });
   }
 };
