@@ -35,7 +35,7 @@ const countCoursesCompletedByUser = async (req, res) => {
 
 const getCompletedCoursesWithImages = async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, page = 1, limit = 10 } = req.query;
 
     if (!userId) {
       return res
@@ -43,16 +43,21 @@ const getCompletedCoursesWithImages = async (req, res) => {
         .json({ message: "Se requiere userId en la query" });
     }
 
-    // 🔹 Obtener los cursos completados
-    const completed = await CourseProgress.findAll({
+    // 🔹 Cálculo de paginación
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const offset = (pageNum - 1) * limitNum;
+
+    // 🔹 Consulta con paginación
+    const { count, rows } = await CourseProgress.findAndCountAll({
       where: {
         userId,
-        percent: { [Op.gte]: 95 }, // >= 95% completado
+        percent: { [Op.gte]: 95 },
       },
       include: [
         {
           model: Course,
-          as: "course", // asegúrate que la relación exista: CourseProgress.belongsTo(Course, { as: 'course', foreignKey: 'courseId' })
+          as: "course",
           include: [
             {
               model: ImageCourses,
@@ -64,10 +69,12 @@ const getCompletedCoursesWithImages = async (req, res) => {
         },
       ],
       order: [["updatedAt", "DESC"]],
+      limit: limitNum,
+      offset,
     });
 
-    // 🔹 Formatear la respuesta
-    const courses = completed
+    // 🔹 Formatear respuesta
+    const courses = rows
       .map((c) => {
         const course = c.course?.toJSON();
         if (!course) return null;
@@ -82,7 +89,12 @@ const getCompletedCoursesWithImages = async (req, res) => {
       })
       .filter(Boolean);
 
+    // 🔹 Respuesta con metadatos de paginación
     return res.status(200).json({
+      total: count,
+      page: pageNum,
+      totalPages: Math.ceil(count / limitNum),
+      limit: limitNum,
       courses,
     });
   } catch (error) {
