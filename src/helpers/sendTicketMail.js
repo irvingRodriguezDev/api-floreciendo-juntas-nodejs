@@ -1,4 +1,4 @@
-const generateTicketPDF = require("./generateTicketPDF");
+const generateTicketPdf = require("./generateTicketPdf");
 const {
   generateCalendarLinks,
   saveICSToS3,
@@ -15,8 +15,8 @@ const sender = process.env.SENGRID_FROM;
 const sendTicketEmail = async (ticket, event, user) => {
   try {
     // 1. Generar PDF del ticket
-    const pdfUrl = await generateTicketPDF(ticket);
-
+    const pdfUrl = await generateTicketPdf(ticket);
+    const eventTitle = event.title;
     // 2. Generar enlaces de calendario
     const calendarLinks = generateCalendarLinks(event, pdfUrl);
 
@@ -89,8 +89,9 @@ const sendTicketEmail = async (ticket, event, user) => {
             <!-- Botón de descarga del ticket -->
             <div style="text-align: center; margin: 30px 0;">
               <a href="${pdfUrl}"
-                style="background: #ec4899; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(236, 72, 153, 0.3);">
-                📄 Descargar mi boleto PDF
+                 download="mi_boleto_${eventTitle}.pdf"
+                 style="background: #ec4899; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(236, 72, 153, 0.3);">
+                 📄 Descargar mi boleto PDF
               </a>
             </div>
             
@@ -121,6 +122,10 @@ const sendTicketEmail = async (ticket, event, user) => {
             
         </html>
       `,
+      trackingSettings: {
+        clickTracking: { enable: false },
+        openTracking: { enable: false },
+      },
     };
 
     console.log(`✅ Email enviado a ${user.email} con opciones de calendario`);
