@@ -6,6 +6,7 @@ const getS3Url = require("./getS3Url");
 /**
  * 🎟️ Genera HTML del ticket con diseño premium y emojis a color
  */
+
 const generateTicketHTML = (ticket, event, user) => {
   const formattedDate = event.startDate
     ? new Date(event.startDate).toLocaleDateString("es-MX", {
@@ -32,6 +33,7 @@ const generateTicketHTML = (ticket, event, user) => {
   return `
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -54,7 +56,7 @@ const generateTicketHTML = (ticket, event, user) => {
     .ticket-container {
       width: 595px;
       height: 280px;
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      background: linear-gradient(180deg, #F3B9CD 0%, #F6C8D7 100%);
       border-radius: 0;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       position: relative;
@@ -100,7 +102,7 @@ const generateTicketHTML = (ticket, event, user) => {
     .ticket-label {
       font-size: 10px;
       font-weight: 600;
-      color: #9ca3af;
+      color: #D72E79;
       letter-spacing: 1px;
       margin-bottom: 20px;
       text-transform: uppercase;
@@ -124,7 +126,7 @@ const generateTicketHTML = (ticket, event, user) => {
       font-family: 'Courier New', monospace;
       font-size: 9px;
       font-weight: bold;
-      color: #6b7280;
+      color: #D72E79;
       letter-spacing: 1px;
       text-align: center;
       margin-top: 10px;
@@ -133,7 +135,7 @@ const generateTicketHTML = (ticket, event, user) => {
     /* Línea divisoria punteada */
     .divider {
       width: 1px;
-      background: linear-gradient(to bottom, #374151 50%, transparent 50%);
+      background: linear-gradient(to bottom, #D72E79 50%, transparent 50%);
       background-size: 1px 10px;
       background-repeat: repeat-y;
       position: relative;
@@ -145,19 +147,43 @@ const generateTicketHTML = (ticket, event, user) => {
       left: 50%;
       transform: translate(-50%, -50%);
       font-size: 12px;
-      color: #4b5563;
-      background: #0f172a;
+      color: #fff;
+      background: #D72E79;
       padding: 5px;
     }
 
     /* Sección derecha - Información */
     .right-section {
+      /* Quita la imagen de aquí y deja el color base */
+      background-color: #F3B9CD;
       flex: 1;
       padding: 30px;
       display: flex;
       flex-direction: column;
       position: relative;
       z-index: 1;
+      /* Esto es para que el contenido quede por encima del ::before */
+    }
+
+    .right-section::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background:
+        url('https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/TEDDY+CAROLINA+TAVERA+(1).png') center right 30px/65% no-repeat,
+        #F3B9CD;
+      /* Se mantiene el color para la mezcla */
+      background-blend-mode: multiply;
+
+      /* Aplica la opacidad SOLAMENTE al pseudo-elemento (donde está la imagen) */
+      opacity: 0.3;
+      /* <-- Opacidad de la imagen */
+
+      z-index: -1;
+      /* Manda esta capa detrás del contenido de .right-section */
     }
 
     .accent-bar {
@@ -171,14 +197,14 @@ const generateTicketHTML = (ticket, event, user) => {
     }
 
     .attendee-section {
-      margin-top: 15px;
+      margin-top: -10px;
       margin-bottom: 20px;
     }
 
     .label {
       font-size: 10px;
       font-weight: 600;
-      color: #94a3b8;
+      color: #D72E79;
       letter-spacing: 0.5px;
       margin-bottom: 5px;
       text-transform: uppercase;
@@ -189,6 +215,7 @@ const generateTicketHTML = (ticket, event, user) => {
       font-weight: bold;
       color: #ffffff;
       margin: 0;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
 
     .event-title {
@@ -198,6 +225,7 @@ const generateTicketHTML = (ticket, event, user) => {
       margin: 0 0 15px 0;
       line-height: 1.2;
       text-transform: uppercase;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
 
     .info-group {
@@ -206,20 +234,20 @@ const generateTicketHTML = (ticket, event, user) => {
 
     .info-content {
       font-size: 12px;
-      color: #e2e8f0;
+      color: #fff;
       margin: 0;
       line-height: 1.4;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
 
     .footer {
-      margin-top: auto;
-      padding-top: 15px;
-      border-top: 1px solid #1e293b;
+      margin-top: -10px;
+      padding-top: -20px;
     }
 
     .footer-text {
-      font-size: 8px;
-      color: #64748b;
+      font-size: 10px;
+      color: #D72E79;
       font-style: italic;
       margin: 0 0 5px 0;
     }
@@ -233,15 +261,16 @@ const generateTicketHTML = (ticket, event, user) => {
     }
   </style>
 </head>
+
 <body>
   <div class="ticket-container">
     <!-- Sección Izquierda: QR -->
     <div class="left-section">
       <div class="ticket-label">Boleto de Entrada</div>
       <div class="qr-wrapper">
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(ticket.code)}&bgcolor=ffffff&color=1f2937&margin=0" 
-             alt="QR Code" 
-             class="qr-code">
+        <img
+          src="https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(ticket.code)}&bgcolor=ffffff&color=1f2937&margin=0"
+          alt="QR Code" class="qr-code">
       </div>
       <div class="ticket-code">${ticket.code}</div>
     </div>
@@ -253,8 +282,7 @@ const generateTicketHTML = (ticket, event, user) => {
 
     <!-- Sección Derecha: Información -->
     <div class="right-section">
-      <div class="accent-bar"></div>
-      
+
       <div class="attendee-section">
         <div class="label">Asistente</div>
         <h2 class="attendee-name">${user.name || "Invitado Especial"}</h2>
@@ -263,21 +291,13 @@ const generateTicketHTML = (ticket, event, user) => {
       <h1 class="event-title">${event.title || "Evento Especial"}</h1>
 
       <div class="info-group">
-        <div class="label">📅  Fecha y Hora</div>
+        <div class="label">📅 Fecha y Hora</div>
         <p class="info-content">${fullDateTime}</p>
       </div>
-
-      ${
-        event.location
-          ? `
       <div class="info-group">
-        <div class="label">📍  Ubicación</div>
+        <div class="label">📍 Ubicación</div>
         <p class="info-content">${event.location}</p>
       </div>
-      `
-          : ""
-      }
-
       <div class="footer">
         <p class="footer-text">Presenta este boleto digital en la entrada del evento • No se permiten devoluciones</p>
         <p class="ticket-id">#${ticket.id}</p>
@@ -285,6 +305,7 @@ const generateTicketHTML = (ticket, event, user) => {
     </div>
   </div>
 </body>
+
 </html>
   `;
 };
@@ -304,23 +325,15 @@ const generateTicketPDF = async (ticket) => {
   const html = generateTicketHTML(ticket, event, user);
 
   // Lanzar Puppeteer
+
   const browser = await puppeteer.launch({
-    executablePath:
-      process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
+    headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-extensions",
-      "--no-first-run",
-      "--no-zygote",
-      "--single-process", // CRÍTICO para Fargate
-      "--disable-accelerated-2d-canvas",
-      "--disable-webgl",
     ],
-    timeout: 30000,
   });
 
   const page = await browser.newPage();

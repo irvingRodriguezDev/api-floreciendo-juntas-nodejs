@@ -25,7 +25,7 @@ const Event = sequelize.define("Event", {
     allowNull: false,
   },
   map: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT,
     allowNull: false,
   },
   startDate: {
