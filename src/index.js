@@ -14,7 +14,9 @@ const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
 const releaseExpiredReservations = require("./jobs/releaseReservations");
 
 const app = express();
-
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
 // ==============================
 // 1️⃣ Stripe Webhook (raw body)
 // ==============================

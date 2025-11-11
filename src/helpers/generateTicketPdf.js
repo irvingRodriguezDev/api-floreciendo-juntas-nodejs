@@ -310,11 +310,17 @@ const generateTicketPDF = async (ticket) => {
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-gpu",
       "--disable-dev-shm-usage",
-      "--single-process",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-extensions",
+      "--no-first-run",
       "--no-zygote",
+      "--single-process", // CRÍTICO para Fargate
+      "--disable-accelerated-2d-canvas",
+      "--disable-webgl",
     ],
+    timeout: 30000,
   });
 
   const page = await browser.newPage();

@@ -3,10 +3,10 @@
   "networkMode": "awsvpc",
   "executionRoleArn": "arn:aws:iam::693148193622:role/ecsTaskExecutionRole",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "512",
-  "memory": "1024",
+  "cpu": "2048",
+  "memory": "4096",
   "runtimePlatform": {
-    "cpuArchitecture": "ARM64",
+    "cpuArchitecture": "X86_64",
     "operatingSystemFamily": "LINUX"
   },
   "containerDefinitions": [
