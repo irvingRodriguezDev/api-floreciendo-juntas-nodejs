@@ -32,6 +32,12 @@ app.post(
   webhookController.handleTicketStripeWebhook
 );
 
+app.post(
+  "/webhooks/stripe/order-payments",
+  bodyParser.raw({ type: "application/json" }),
+  webhookController.handleOrderPaymentStripeWebhook
+);
+
 // ==============================
 // 2️⃣ Parsers normales
 // ==============================

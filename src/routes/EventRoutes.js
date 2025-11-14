@@ -13,6 +13,7 @@ router.post(
   eventController.createEvent
 );
 router.get("/", eventController.getEvents);
+router.get("/topsales", eventController.topEventsSales);
 router.get("/similar/:id", eventController.getSimilarEvents);
 router.get("/latest", eventController.getLatestEvents);
 router.get("/:eventId/:ticketId/calendar", eventController.downloadIcsFile);

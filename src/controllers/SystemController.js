@@ -22,10 +22,14 @@ const showSystem = async (req, res) => {
   try {
     const { id } = req.params;
     const system = await System.findByPk(id);
+    const formatSystem = {
+      ...system.toJSON(),
+      system_icon: system.icon ? getS3Url(system.icon) : null,
+    };
     if (!system) {
       return res.status(400).json({ message: "Sistema no encontrado" });
     }
-    return res.status(200).json(system);
+    return res.status(200).json(formatSystem);
   } catch (error) {
     return res.status(500).json({
       message: "Error al obtener el sistema",

@@ -551,6 +551,48 @@ const downloadIcsFile = async (req, res) => {
   }
 };
 
+const topEventsSales = async (req, res) => {
+  try {
+    const events = await Event.findAll({
+      attributes: [
+        "id",
+        "title",
+        [
+          // Contamos los boletos vendidos (usa el alias 'tickets' y la columna correcta)
+          Event.sequelize.fn("COUNT", Event.sequelize.col("tickets.id")),
+          "tickets_sold",
+        ],
+      ],
+      include: [
+        {
+          model: Ticket,
+          as: "tickets", // alias correcto
+          attributes: [],
+          where: { sold: true }, // solo tickets vendidos
+          required: true, // solo eventos con ventas
+        },
+      ],
+      group: ["Event.id", "Event.title"], // agrupa correctamente
+      order: [[Event.sequelize.literal("tickets_sold"), "DESC"]],
+      limit: 3,
+      subQuery: false, // evita el error de referencia en subconsultas
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: "Top 3 eventos con más tickets vendidos",
+      data: events,
+    });
+  } catch (error) {
+    console.error("❌ Error al consultar los eventos con más ventas:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Error al consultar los eventos con más ventas",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   buyTicket,
   getEventById,
@@ -560,4 +602,5 @@ module.exports = {
   getSimilarEvents,
   updateEvent,
   downloadIcsFile,
+  topEventsSales,
 };
