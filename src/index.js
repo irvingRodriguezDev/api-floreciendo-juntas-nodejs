@@ -22,7 +22,7 @@ app.get("/health", (req, res) => {
 // ==============================
 app.post(
   "/webhooks/stripe/subscription",
-  bodyParser.raw({ type: "application/json" }),
+  express.raw({ type: "application/json" }),
   webhookController.handleSubscriptionStripeWebhook
 );
 

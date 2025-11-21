@@ -6,9 +6,12 @@ const {
   Event,
   Order,
   OrderPayment,
+  OrderItem,
+  Product,
 } = require("../models");
 const sendTicketEmail = require("../helpers/sendTicketMail");
-
+const sequelize = require("../config/db");
+// NOTA: Asegúrate de que estas variables de entorno estén cargadas
 const subscriptionEndpointSecret =
   process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET;
 const ticketEndpointSecret = process.env.STRIPE_WEBHOOK_TICKET_SECRET;
@@ -18,12 +21,13 @@ const orderPaymentsEndpointSecret =
 // 📅 Función para expiración de pago único (1 mes)
 const getExpirationDate = () => {
   const now = new Date();
-  now.setMonth(now.getMonth() + 1);
+  now.setMonth(now.getMonth() + 1); // +30 días aprox
   return now;
 };
 
 /* -----------------------------
    📦 Webhook: SUSCRIPCIONES
+   (Espera metadata: { userId, subscriptionType })
 ----------------------------- */
 const handleSubscriptionStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
@@ -35,97 +39,89 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       sig,
       subscriptionEndpointSecret
     );
-    console.log("✅ Evento recibido (suscripción):", event.type);
   } catch (err) {
-    console.error("❌ Error verificando webhook suscripción:", err.message);
+    console.error("❌ Error verificando webhook:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   const data = event.data.object;
 
   try {
-    // 🚫 Filtrar eventos que no correspondan a suscripciones
-    if (
-      event.type === "checkout.session.completed" &&
-      data.mode !== "subscription"
-    ) {
-      console.log("⚠️ Evento ignorado (no es una suscripción):", data.mode);
-      return res.status(200).json({ received: true });
-    }
-
     switch (event.type) {
-      // 🟢 Cuando se completa la compra de la suscripción
+      /* ================================================= */
+      /* 1) CHECKOUT SESSION COMPLETED                     */
+      /* ================================================= */
       case "checkout.session.completed": {
         const session = data;
-        console.log("checkout.session.completed metadata:", session.metadata);
 
         if (!session.metadata || !session.metadata.userId) {
-          console.warn("⚠️ Sesión sin metadata esperada. Se ignora.");
           return res.status(200).json({ received: true });
         }
 
-        if (session.payment_status !== "paid") {
-          console.log("⚠️ Pago no completado, ignorado.");
-          return res.status(200).json({ received: true });
-        }
+        const { userId, priceId, subscriptionType } = session.metadata;
 
-        const { userId, subscriptionType } = session.metadata;
-        const subscriptionId = session.subscription || null;
+        const subscriptionId =
+          session.mode === "subscription" ? session.subscription : null;
 
-        const subscriptionRecord = await Subscription.findOne({
-          where: { stripe_checkout_session_id: session.id },
-        });
-
-        if (!subscriptionRecord) {
-          console.warn(
-            "⚠️ No se encontró registro de suscripción:",
-            session.id
-          );
-          return res.status(200).json({ received: true });
-        }
-
-        const updateData = {
+        // 👉 Crear registro en la BD (Stripe recomienda hacerlo aquí)
+        await Subscription.create({
+          stripe_checkout_session_id: session.id,
+          stripe_subscription_id: subscriptionId,
+          stripe_customer_id: session.customer,
+          subscription_type: subscriptionType,
+          price_id: priceId,
+          userId,
           status: "active",
           start_date: new Date(),
-        };
+          end_date: subscriptionType === "ONETIME" ? getExpirationDate() : null,
+          next_renewal: null,
+        });
 
-        // 🗓️ Si es una suscripción de pago único (1 mes)
-        if (subscriptionType === "ONETIME") {
-          updateData.end_date = getExpirationDate(); // función que calcula +30 días
-        }
-
-        // 🔁 Si es una suscripción recurrente
-        if (subscriptionId) {
-          updateData.stripe_subscription_id = subscriptionId;
-        }
-
-        await subscriptionRecord.update(updateData);
-        console.log("✅ Suscripción actualizada:", subscriptionRecord.id);
-
-        // 👤 Actualizar usuario
-        const userToUpdate = await User.findByPk(userId);
-        if (userToUpdate) {
-          await userToUpdate.update({
+        // 👉 Actualizar usuario
+        const user = await User.findByPk(userId);
+        if (user) {
+          await user.update({
             isSubscribed: true,
             stripeSubscriptionId: subscriptionId,
           });
-          console.log("👤 Usuario actualizado:", userToUpdate.id);
         }
 
         break;
       }
 
-      // 🔴 Cuando el usuario cancela la suscripción
+      /* ================================================= */
+      /* 2) SUBSCRIPTION DELETED                           */
+      /* ================================================= */
       case "customer.subscription.deleted": {
         const subscription = data;
-        const userToUpdate = await User.findOne({
+
+        const subscriptionRecord = await Subscription.findOne({
+          where: { stripe_subscription_id: subscription.id },
+        });
+
+        if (subscriptionRecord) {
+          await subscriptionRecord.update({
+            status: "canceled",
+            end_date: new Date(),
+          });
+        }
+
+        const user = await User.findOne({
           where: { stripeSubscriptionId: subscription.id },
         });
 
-        if (userToUpdate) {
-          await userToUpdate.update({ isSubscribed: false });
-          console.log("👤 Usuario dado de baja:", userToUpdate.id);
+        if (user) {
+          await user.update({ isSubscribed: false });
         }
+
+        break;
+      }
+
+      /* ================================================= */
+      /* 3) SUBSCRIPTION UPDATED (Renewal, changes, etc)    */
+      /* ================================================= */
+      case "customer.subscription.updated": {
+        const subscription = data;
 
         const subscriptionRecord = await Subscription.findOne({
           where: { stripe_subscription_id: subscription.id },
@@ -134,285 +130,237 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         if (subscriptionRecord) {
           await subscriptionRecord.update({
             status: subscription.status,
-            end_date: new Date(),
+            next_renewal: subscription.current_period_end
+              ? new Date(subscription.current_period_end * 1000)
+              : null,
           });
-          console.log("🟥 Suscripción cancelada:", subscription.id);
         }
 
         break;
       }
 
-      // 🔁 Cuando Stripe actualiza el periodo o estado
-      case "customer.subscription.updated": {
-        const subscription = data;
-        console.log("🔔 customer.subscription.updated:", {
-          id: subscription.id,
-          status: subscription.status,
-          current_period_end: subscription.current_period_end,
-        });
-
-        const subscriptionRecord = await Subscription.findOne({
-          where: { stripe_subscription_id: subscription.id },
-        });
-
-        if (subscriptionRecord) {
-          const updateData = { status: subscription.status };
-
-          // 🧩 Validar que current_period_end sea válido
-          if (subscription.current_period_end) {
-            const timestamp = subscription.current_period_end * 1000;
-            const date = new Date(timestamp);
-            if (!isNaN(date)) {
-              updateData.next_renewal = date;
-            } else {
-              console.warn(
-                "⚠️ Fecha inválida recibida en current_period_end:",
-                subscription.current_period_end
-              );
-            }
-          } else {
-            console.warn("⚠️ Sin current_period_end en este evento");
-          }
-
-          await subscriptionRecord.update(updateData);
-          console.log("🔁 Suscripción actualizada:", subscription.id);
-        }
-
-        break;
-      }
-
+      /* ================================================= */
       default:
-        console.log(`ℹ️ Evento no manejado (suscripción): ${event.type}`);
+        console.log("Evento ignorado:", event.type);
     }
 
-    res.status(200).json({ received: true });
+    return res.status(200).json({ received: true });
   } catch (error) {
-    console.error("💥 Error manejando webhook (suscripción):", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error("❌ Error procesando webhook:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 };
 
 /* -----------------------------
    🎟️ Webhook: TICKETS
+   (Espera metadata: { ticketId, eventId, buyerName, buyerEmail })
 ----------------------------- */
 const handleTicketStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
+  let event;
 
   try {
-    const event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      ticketEndpointSecret
-    );
+    event = stripe.webhooks.constructEvent(req.body, sig, ticketEndpointSecret);
 
-    // 🚫 Filtrar: si no es un pago único (payment), salir
-    if (
-      event.type === "checkout.session.completed" &&
-      event.data.object.mode !== "payment"
-    ) {
-      console.log(
-        "⚠️ Evento ignorado (no es un ticket):",
-        event.data.object.mode
-      );
-      return res.status(200).json({ received: true });
-    }
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-
-      if (!session.metadata || !session.metadata.ticketId) {
-        console.warn("⚠️ Sesión sin metadata de ticket:", session.id);
-        return res.status(200).json({ received: true });
-      }
-
-      const { ticketId, eventId, buyerName, buyerEmail } = session.metadata;
-
-      const ticket = await Ticket.findByPk(Number(ticketId));
-      const evento = await Event.findByPk(Number(eventId));
-      const usuario = buyerEmail
-        ? await User.findOne({ where: { email: buyerEmail } })
-        : null;
-
-      if (!ticket) {
-        console.warn(`⚠️ Ticket #${ticketId} no encontrado.`);
-        return res.status(200).json({ received: true });
-      }
-
-      // Marcar como vendido
-      ticket.sold = true;
-      ticket.reserved = false;
-      ticket.reservation_expires_at = null;
-      await ticket.save();
-
-      if (req.io) {
-        req.io.emit("ticketSold", {
-          eventId: Number(eventId),
-          ticketId: ticket.id,
-          buyerName,
-        });
-      }
-
-      await sendTicketEmail(ticket, evento, usuario);
-      console.log(
-        `✅ Ticket #${ticket.id} confirmado y enviado a ${buyerEmail}`
-      );
-    }
-
-    res.status(200).json({ received: true });
+    console.log("🎟 Evento recibido TICKET:", event.type);
   } catch (err) {
-    console.error("❌ Error en webhook de ticket:", err.message);
-    res.status(400).send(`Webhook Error: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  const session = event.data.object;
+
+  // 🚫 FIREWALL → Blindaje absoluto del flujo
+  if (session.metadata?.flow !== "VENTA_TICKET") {
+    console.log("🔒 Evento ignorado (no es ticket)");
+    return res.json({ received: true });
+  }
+
+  // 🚫 NO debe ser suscripción
+  if (session.mode !== "payment") {
+    console.log("🔒 No es pago único, ignorado.");
+    return res.json({ received: true });
+  }
+
+  // SOLO queremos este evento
+  if (event.type !== "checkout.session.completed") {
+    console.log("ℹ️ Evento ignorado:", event.type);
+    return res.json({ received: true });
+  }
+
+  try {
+    const { ticketId, eventId, buyerEmail, buyerName } = session.metadata;
+
+    const ticket = await Ticket.findByPk(ticketId);
+
+    if (!ticket || ticket.sold) {
+      console.log("⚠️ Ticket ya vendido o no existe");
+      return res.json({ received: true });
+    }
+
+    ticket.sold = true;
+    ticket.reserved = false;
+    ticket.reservation_expires_at = null;
+    await ticket.save();
+
+    const evento = await Event.findByPk(eventId);
+    const usuario = await User.findOne({ where: { email: buyerEmail } });
+
+    await sendTicketEmail(ticket, evento, usuario);
+
+    if (req.io) {
+      req.io.emit("ticketSold", {
+        ticketId,
+        eventId,
+        buyerName,
+      });
+    }
+
+    console.log(`🎉 Ticket vendido #${ticket.id}`);
+    res.json({ received: true });
+  } catch (err) {
+    console.error("💥 Error ticket webhook:", err);
+    res.status(500).json({ error: "Internal error" });
   }
 };
 
 /*----------------------------
-  Webhook pagos salon
+  🛍️ Webhook: PAGOS DE ÓRDENES (Salón)
+  (Espera metadata: { orderId, type: 'initial'|'partial' })
 ------------------------------*/
 const handleOrderPaymentStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
+  let event;
 
   try {
-    const event = stripe.webhooks.constructEvent(
-      req.body, // ⚠️ sin JSON.parse()
+    event = stripe.webhooks.constructEvent(
+      req.body,
       sig,
       orderPaymentsEndpointSecret
     );
 
-    console.log("📩 Evento recibido:", event.type);
+    console.log("💰 Webhook ORDER PAYMENT:", event.type);
+  } catch (err) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
 
-    // =====================================================
-    // 🔹 1️⃣ payment_intent.succeeded → Pago confirmado
-    // =====================================================
-    if (event.type === "payment_intent.succeeded") {
-      const intent = event.data.object;
-      const orderId = intent.metadata?.orderId;
-      const paymentType = intent.metadata?.type || "partial"; // 🔸 por defecto "partial"
+  const data = event.data.object;
 
-      if (!orderId) {
-        console.log("⚠️ No hay orderId en intent.metadata");
+  // 🚫 Ignorar si NO es pago de orden
+  if (data.metadata?.flow !== "ORDER_PAYMENT") {
+    return res.json({ received: true });
+  }
+
+  // 🚫 Ignorar suscripciones
+  if (data.mode === "subscription") {
+    return res.json({ received: true });
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const intent = data;
+
+      const orderId = intent.metadata.orderId;
+      const paymentType = intent.metadata.type;
+      const reference = intent.payment_intent;
+      const amount = Number(intent.amount_total / 100);
+
+      // 🛑 Idempotencia: si ya existe un pago con este reference → ignorar
+      const dup = await OrderPayment.findOne({ where: { reference } });
+      if (dup) {
+        console.log("🟡 Pago duplicado ignorado, REF:", reference);
         return res.json({ received: true });
       }
 
-      const order = await Order.findByPk(orderId);
-      if (!order) {
-        console.log("⚠️ Orden no encontrada:", orderId);
-        return res.json({ received: true });
+      // ============================================
+      // 🧵 INICIO TRANSACCIÓN
+      // ============================================
+      const t = await sequelize.transaction();
+
+      try {
+        const order = await Order.findByPk(orderId, {
+          include: [
+            {
+              model: OrderItem,
+              as: "items",
+              include: [{ model: Product, as: "product" }],
+            },
+          ],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+
+        if (!order) {
+          await t.rollback();
+          return res.json({ received: true });
+        }
+
+        // ============================================
+        // 🔥 DESCONTAR STOCK (solo si NO se ha descontado antes)
+        // ============================================
+        if (!order.stockDiscounted) {
+          for (const item of order.items) {
+            const product = item.product;
+            const newStock = Number(product.stock) - Number(item.quantity);
+            if (newStock < 0) {
+              await t.rollback();
+              return res
+                .status(400)
+                .json({ error: `Stock insuficiente para ${product.name}` });
+            }
+            await product.update({ stock: newStock }, { transaction: t });
+          }
+
+          // marcar dentro de la transacción
+          await order.update({ stockDiscounted: true }, { transaction: t });
+        }
+
+        // ============================================
+        // 💵 Registrar el pago inicial o adicional
+        // ============================================
+        await OrderPayment.create(
+          {
+            orderId,
+            amount,
+            paymentDate: new Date(),
+            paymentMethod: "tarjeta",
+            status: "completado",
+            type: paymentType,
+            reference,
+          },
+          { transaction: t }
+        );
+
+        // actualizar totales de la orden
+        order.paidAmount = Number(order.paidAmount) + amount;
+        order.remainingAmount = Math.max(
+          0,
+          Number(order.totalAmount) - order.paidAmount
+        );
+        order.status = order.remainingAmount <= 0 ? "pagado" : "activo";
+
+        await order.save({ transaction: t });
+
+        // Confirmar cambios
+        await t.commit();
+
+        console.log(
+          `💵 Pago registrado y stock descontado para orden #${orderId}`
+        );
+      } catch (err) {
+        console.error("💥 Error dentro de la transacción:", err);
+        await t.rollback();
+        return res.status(500).json({ error: "Webhook transactional error" });
       }
 
-      const amountPaid = (intent.amount_received || 0) / 100;
-
-      // ⚙️ Evitar duplicados
-      const existingPayment = await OrderPayment.findOne({
-        where: { reference: intent.id },
-      });
-      if (existingPayment) {
-        console.log("⚠️ Pago ya registrado, ignorando:", intent.id);
-        return res.json({ received: true });
-      }
-      const paymentMap = {
-        card: "tarjeta",
-        paypal: "paypal",
-        cash: "efectivo",
-        bank_transfer: "transferencia",
-      };
-
-      const paymentMethod =
-        paymentMap[session.payment_method_types[0]] || "otro";
-      // 💾 Crear el registro del pago
-      await OrderPayment.create({
-        orderId,
-        amount: amountPaid,
-        paymentMethod,
-        status: "completado",
-        reference: intent.id,
-        paymentDate: new Date(),
-        type: paymentType, // 👈 tipo de pago (initial o partial)
-      });
-
-      // 💰 Actualizar montos
-      order.paidAmount = parseFloat(order.paidAmount) + amountPaid;
-      order.remainingAmount = parseFloat(order.totalAmount) - order.paidAmount;
-      order.status = order.remainingAmount <= 0 ? "pagado" : "activo";
-      await order.save();
-
-      console.log(`✅ Pago (${paymentType}) registrado para orden #${orderId}`);
-    }
-
-    // =====================================================
-    // 🔹 2️⃣ checkout.session.completed → Sesión terminada
-    // =====================================================
-    else if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const orderId = session.metadata?.orderId;
-      const paymentType = session.metadata?.type || "partial";
-
-      if (!orderId) {
-        console.log("⚠️ No hay orderId en session.metadata");
-        return res.json({ received: true });
-      }
-
-      const order = await Order.findByPk(orderId);
-      if (!order) {
-        console.log("⚠️ Orden no encontrada:", orderId);
-        return res.json({ received: true });
-      }
-
-      const reference = session.payment_intent;
-
-      // ⚙️ Evitar duplicados
-      const existingPayment = await OrderPayment.findOne({
-        where: { reference },
-      });
-      if (existingPayment) {
-        console.log("⚠️ Pago ya registrado, ignorando:", reference);
-        return res.json({ received: true });
-      }
-
-      const amountPaid = (session.amount_total || 0) / 100;
-
-      const paymentMap = {
-        card: "tarjeta",
-        paypal: "paypal",
-        cash: "efectivo",
-        bank_transfer: "transferencia",
-      };
-
-      const paymentMethod =
-        paymentMap[session.payment_method_types?.[0]] || "otro";
-
-      // 💾 Registrar pago
-      await OrderPayment.create({
-        orderId,
-        amount: amountPaid,
-        paymentMethod,
-        status: "completado",
-        reference,
-        paymentDate: new Date(),
-        type: paymentType, // 👈 "initial" o "partial"
-      });
-
-      // 💰 Actualizar montos
-      order.paidAmount = parseFloat(order.paidAmount) + amountPaid;
-      order.remainingAmount = parseFloat(order.totalAmount) - order.paidAmount;
-      order.status = order.remainingAmount <= 0 ? "pagado" : "activo";
-      await order.save();
-
-      console.log(
-        `✅ Pago (${paymentType}) registrado (session) para orden #${orderId}`
-      );
-    }
-
-    // =====================================================
-    // 🔹 3️⃣ Pago fallido
-    // =====================================================
-    else if (event.type === "payment_intent.payment_failed") {
-      console.log("⚠️ Pago fallido:", event.data.object.id);
+      // ============================================
+      // FIN
+      // ============================================
     }
 
     res.json({ received: true });
-  } catch (error) {
-    console.error("🚨 Error verificando webhook:", error.message);
-    res.status(400).send(`Webhook Error: ${error.message}`);
+  } catch (err) {
+    console.error("💥 Error orden webhook:", err);
+    res.status(500).json({ error: "Internal error" });
   }
 };
 

@@ -1,12 +1,14 @@
+const { where } = require("sequelize");
 const getS3Url = require("../helpers/getS3Url");
 const { Cart, CartItem, Product, ProductImage } = require("../models");
 
 /**
  * 🛒 Agregar producto al carrito
  */
+
 const addItemToCart = async (req, res) => {
   try {
-    const userId = req.user.id; // ⚠️ viene del token JWT
+    const userId = req.user.id;
     const { productId, quantity } = req.body;
 
     if (!productId || !quantity) {
@@ -15,7 +17,11 @@ const addItemToCart = async (req, res) => {
         .json({ message: "Producto y cantidad son requeridos" });
     }
 
-    const product = await Product.findByPk(productId);
+    // Traemos el producto con su imagen
+    const product = await Product.findByPk(productId, {
+      include: [{ model: ProductImage, as: "image" }],
+    });
+
     if (!product) {
       return res.status(404).json({ message: "Producto no encontrado" });
     }
@@ -26,41 +32,94 @@ const addItemToCart = async (req, res) => {
         .json({ message: "Cantidad supera stock disponible" });
     }
 
-    // Buscar carrito activo o crearlo
+    // Carrito
     let cart = await Cart.findOne({ where: { userId, status: "apartado" } });
     if (!cart) cart = await Cart.create({ userId });
 
-    // Buscar si el producto ya existe en el carrito
-    const existingItem = await CartItem.findOne({
+    // Buscar si ya existe
+    let item = await CartItem.findOne({
       where: { cartId: cart.id, productId },
+      include: [
+        {
+          model: Product,
+          as: "product",
+          include: [{ model: ProductImage, as: "image" }],
+        },
+      ],
     });
 
-    if (existingItem) {
-      const newQuantity = existingItem.quantity + quantity;
+    if (item) {
+      const newQuantity = item.quantity + quantity;
+
       if (newQuantity > product.stock) {
         return res
           .status(400)
           .json({ message: "Cantidad supera stock disponible" });
       }
 
-      existingItem.quantity = newQuantity;
-      existingItem.unitPrice = product.price;
-      existingItem.subtotal = newQuantity * product.price;
-      await existingItem.save();
+      item.quantity = newQuantity;
+      item.unitPrice = product.price;
+      item.subtotal = newQuantity * product.price;
+      await item.save();
     } else {
-      await CartItem.create({
+      item = await CartItem.create({
         cartId: cart.id,
         productId,
         quantity,
         unitPrice: product.price,
         subtotal: quantity * product.price,
       });
+
+      // volver a traer el item con su product + image
+      item = await CartItem.findByPk(item.id, {
+        include: [
+          {
+            model: Product,
+            as: "product",
+            include: [{ model: ProductImage, as: "image" }],
+          },
+        ],
+      });
     }
 
-    res.json({ message: "Producto agregado al carrito correctamente" });
+    // 🔥 Convertir la imagen a URL de S3
+    // Construir URL completa de la imagen
+    let imageUrl = null;
+
+    if (item.product.image && item.product.image.url) {
+      imageUrl = getS3Url(item.product.image.url);
+    }
+
+    // Formatear respuesta completa ANTES de enviarla
+    const formattedResponse = {
+      message: "Producto agregado al carrito correctamente",
+      cartId: item.cartId,
+      id: item.id,
+      productId: item.productId,
+      quantity: item.quantity,
+      subtotal: item.subtotal,
+      unitPrice: item.unitPrice,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+
+      product: {
+        ...item.product.toJSON(),
+        image: item.product.image
+          ? {
+              ...item.product.image.toJSON(),
+              url: imageUrl, // ← URL ya transformada
+            }
+          : null,
+      },
+    };
+
+    // 🔥 Respuesta FINAL EXACTA como la necesita el frontend
+    return res.json(formattedResponse);
   } catch (error) {
     console.error("Error al agregar al carrito:", error);
-    res.status(500).json({ message: "Error al agregar producto al carrito" });
+    return res
+      .status(500)
+      .json({ message: "Error al agregar producto al carrito" });
   }
 };
 
@@ -68,9 +127,11 @@ const addItemToCart = async (req, res) => {
 const syncCart = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { items } = req.body;
+    // ⚠️ CORRECCIÓN 1: Acceder a 'req.body.items.items'
+    // El payload ahora es { items: { items: [...] } }
+    const guestItems = req.body.items.items;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
+    if (!guestItems || !Array.isArray(guestItems) || guestItems.length === 0) {
       return res.status(400).json({
         message: "No hay items para sincronizar.",
       });
@@ -90,13 +151,16 @@ const syncCart = async (req, res) => {
       where: { cartId: cart.id },
     });
 
-    // Convertimos el carrito actual en un map
+    // Convertimos el carrito actual en un map (por productId)
     const cartMap = {};
     existingItems.forEach((i) => (cartMap[i.productId] = i));
 
     // 3️⃣ Procesar cada item del carrito del guest
-    for (const item of items) {
-      const { product_id, quantity } = item;
+    // ⚠️ CORRECCIÓN 2: Iterar sobre 'guestItems'
+    for (const item of guestItems) {
+      // ⚠️ CORRECCIÓN 3: Los datos están en 'item' y anidados en 'item.product'
+      const product_id = item.product.product_id;
+      const quantity = item.quantity;
 
       const product = await Product.findByPk(product_id);
       if (!product) continue;
@@ -104,7 +168,7 @@ const syncCart = async (req, res) => {
       const stock = product.stock ?? 0;
 
       const finalQuantity = Math.min(quantity, stock);
-      const unitPrice = product.price;
+      const unitPrice = product.price; // O item.unitPrice, pero se prefiere usar el de la DB
       const subtotal = unitPrice * finalQuantity;
 
       if (cartMap[product_id]) {
@@ -225,11 +289,17 @@ const getUserCart = async (req, res) => {
 const updateCartItem = async (req, res) => {
   try {
     const { itemId } = req.params;
-    const { quantity } = req.body;
 
-    const item = await CartItem.findByPk(itemId, {
+    const { quantity, product_id } = req.body;
+
+    const item = await CartItem.findOne({
+      where: {
+        id: itemId,
+        productId: product_id,
+      },
       include: [{ model: Product, as: "product" }],
     });
+    console.log(item, "el item");
 
     if (!item) {
       return res
@@ -259,7 +329,7 @@ const updateCartItem = async (req, res) => {
  */
 const removeCartItem = async (req, res) => {
   try {
-    const { itemId } = req.params;
+    const { itemId, productId } = req.params;
 
     const item = await CartItem.findByPk(itemId);
     if (!item) {
@@ -287,7 +357,8 @@ const clearCart = async (req, res) => {
       return res.status(404).json({ message: "Carrito no encontrado" });
 
     await CartItem.destroy({ where: { cartId: cart.id } });
-
+    cart.status = "abandonado";
+    cart.save();
     res.json({ message: "Carrito vaciado correctamente" });
   } catch (error) {
     console.error("Error al vaciar carrito:", error);

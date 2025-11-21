@@ -18,7 +18,7 @@ const sendTicketEmail = async (ticket, event, user) => {
     const pdfUrl = await generateTicketPdf(ticket);
     const eventTitle = event.title;
     // 2. Generar enlaces de calendario
-    const calendarLinks = generateCalendarLinks(event, pdfUrl);
+    const calendarLinks = generateCalendarLinks(event, pdfUrl, ticket.id);
 
     // 3. Guardar archivo ICS en S3
     const icsS3Key = await saveICSToS3(event, pdfUrl, uploadToS3, ticket.id);

@@ -1,10 +1,11 @@
 {
   "family": "floreciendo-task",
   "networkMode": "awsvpc",
-  "executionRoleArn": "arn:aws:iam::693148193622:role/ecsTaskExecutionRole",
   "requiresCompatibilities": ["FARGATE"],
-  "cpu": "2048",
-  "memory": "4096",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::693148193622:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::693148193622:role/ecsTaskRole",
   "runtimePlatform": {
     "cpuArchitecture": "X86_64",
     "operatingSystemFamily": "LINUX"
@@ -13,13 +14,23 @@
     {
       "name": "api-container",
       "image": "693148193622.dkr.ecr.us-east-2.amazonaws.com/api/floreciendo-juntas:latest",
+      "cpu": 0,
       "essential": true,
       "portMappings": [
         {
           "containerPort": 3000,
+          "hostPort": 3000,
           "protocol": "tcp"
         }
       ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/floreciendo-task",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
       "secrets": [
         {
           "name": "DB_NAME",
@@ -82,38 +93,44 @@
           "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-backend-url-RIlV4W:BACKEND_URL::"
         },
         {
-            "name":"JWT_SECRET",
-            "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-jwt-secret-Vo49MW:JWT_SECRET::"
-        },
-        { 
-            "name":"AWS_REGION",
-            "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-region-hhX5vn:AWS_REGION::"
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-jwt-secret-Vo49MW:JWT_SECRET::"
         },
         {
-            "name":"AWS_ACCESS_KEY_ID",
-            "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-key-id-aws-2qJpYa:AWS_ACCESS_KEY_ID::"
+          "name": "AWS_REGION",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-region-hhX5vn:AWS_REGION::"
         },
         {
-            "name":"AWS_SECRET_ACCESS_KEY",
-            "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-key-secret-qzt7i8:AWS_SECRET_ACCESS_KEY::"
+          "name": "AWS_ACCESS_KEY_ID",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-key-id-aws-2qJpYa:AWS_ACCESS_KEY_ID::"
         },
         {
-            "name":"AWS_BUCKET_NAME",
-            "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-bucket-name-qw93Ri:AWS_BUCKET_NAME::"
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-key-secret-qzt7i8:AWS_SECRET_ACCESS_KEY::"
         },
         {
-            "name":"AWS_S3_ENVIRONMENT",
-            "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-s3-env-fUgdBe:AWS_S3_ENVIRONMENT::"
+          "name": "AWS_BUCKET_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-bucket-name-qw93Ri:AWS_BUCKET_NAME::"
+        },
+        {
+          "name": "AWS_S3_ENVIRONMENT",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-s3-env-fUgdBe:AWS_S3_ENVIRONMENT::"
+        },
+        {
+          "name": "STRIPE_WEBHOOK_PAYMENTS_ORDER_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-webhook-orders-payments-2xKB4X:STRIPE_WEBHOOK_PAYMENTS_ORDER_SECRET::"
+        },
+        {
+          "name": "LAMBDA_PDF_FUNCTION_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-lambda-pdf-function-name-AJ6Kzs:LAMBDA_PDF_FUNCTION_NAME::"
         }
       ],
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group": "/ecs/floreciendo-task",
-          "awslogs-region": "us-east-2",
-          "awslogs-stream-prefix": "ecs"
-        }
-      }
+      "environment": [],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "systemControls": []
     }
-  ]
+  ],
+  "volumes": [],
+  "placementConstraints": []
 }

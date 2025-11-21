@@ -25,6 +25,7 @@ const CartItem = require("./CartItem");
 const Order = require("./Order");
 const OrderPayment = require("./OrderPayment");
 const RemindersLog = require("./RemindersLog");
+const OrderItem = require("./OrdenItem");
 // Registrar modelos
 const db = {
   sequelize,
@@ -50,6 +51,7 @@ const db = {
   Order,
   OrderPayment,
   RemindersLog,
+  OrderItem,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -77,6 +79,13 @@ Order.belongsTo(User, {
   as: "user",
   foreignKey: "userId",
 });
+// Una orden tiene muchos orderItems
+Order.hasMany(OrderItem, { foreignKey: "orderId", as: "items" });
+OrderItem.belongsTo(Order, { foreignKey: "orderId", as: "order" });
+
+// Un producto puede estar en muchas órdenes
+Product.hasMany(OrderItem, { foreignKey: "productId", as: "orderItems" });
+OrderItem.belongsTo(Product, { foreignKey: "productId", as: "product" });
 Order.hasMany(RemindersLog, { foreignKey: "orderId", as: "reminders" });
 RemindersLog.belongsTo(Order, { foreignKey: "orderId", as: "order" });
 

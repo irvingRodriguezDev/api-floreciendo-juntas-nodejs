@@ -1,89 +1,11 @@
 // controllers/ticketController.js
 const { Ticket, Event, User } = require("../models");
-const PDFDocument = require("pdfkit");
-const QRCode = require("qrcode");
-const fs = require("fs");
 const path = require("path");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
 const sequelize = require("../config/db");
-const { Op, json, literal } = require("sequelize");
+const { Op } = require("sequelize");
 const { generateCalendarLinks } = require("../helpers/generateCalendarLinks");
 const getS3Url = require("../helpers/getS3Url");
-// Crear sesión de pago con Stripe
-const createStripeSession = async (req, res) => {
-  try {
-    const { eventId, buyerName, buyerEmail } = req.body;
-
-    const ticket = await Ticket.findOne({ where: { eventId, sold: false } });
-    if (!ticket) return res.status(400).json({ message: "Tickets agotados" });
-
-    const event = await Event.findByPk(eventId);
-
-    // Crear sesión Stripe usando el precio del evento
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "mxn",
-            product_data: { name: `Ticket - ${event.title}` },
-            unit_amount: event.price, // precio en centavos
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `${process.env.FRONTEND_URL}/success?ticketId=${ticket.id}`,
-      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-      metadata: {
-        ticketId: ticket.id,
-        buyerName,
-        buyerEmail,
-      },
-    });
-
-    res.json({ url: session.url });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error creando sesión de pago" });
-  }
-};
-
-// Webhook Stripe para confirmar pago
-const stripeWebhook = async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    const ticketId = session.metadata.ticketId;
-    const buyerName = session.metadata.buyerName;
-    const buyerEmail = session.metadata.buyerEmail;
-
-    const ticket = await Ticket.findByPk(ticketId, { include: Event });
-    ticket.sold = true;
-    ticket.buyerName = buyerName;
-    ticket.buyerEmail = buyerEmail;
-    await ticket.save();
-
-    await generateTicketPDF(ticket);
-    await sendTicketEmail(ticket);
-  }
-
-  res.json({ received: true });
-};
-
 // Enviar correo con PDF
 const sendTicketEmail = async (ticket) => {
   const transporter = nodemailer.createTransport({
@@ -109,7 +31,8 @@ const sendTicketEmail = async (ticket) => {
 const getUserTickets = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
 
     if (!userId) {
       return res
@@ -125,7 +48,6 @@ const getUserTickets = async (req, res) => {
     const today = new Date();
     const offset = (page - 1) * limit;
 
-    // Buscar boletos vendidos del usuario, de eventos vigentes
     const { rows: tickets, count: totalTickets } = await Ticket.findAndCountAll(
       {
         where: {
@@ -135,12 +57,9 @@ const getUserTickets = async (req, res) => {
         include: [
           {
             model: Event,
-            as: "Event",
+            as: "Event", // <-- asegúrate del alias correcto
             where: {
-              [Op.or]: [
-                { startDate: { [Op.gte]: today } }, // eventos que empiezan hoy o después
-                { endDate: { [Op.gte]: today } }, // eventos que no han terminado
-              ],
+              startDate: { [Op.gte]: today },
             },
             attributes: [
               "id",
@@ -154,8 +73,8 @@ const getUserTickets = async (req, res) => {
           },
         ],
         order: [["createdAt", "DESC"]],
-        limit: parseInt(limit),
-        offset: parseInt(offset),
+        limit,
+        offset,
       }
     );
 
@@ -169,10 +88,10 @@ const getUserTickets = async (req, res) => {
 
     res.status(200).json({
       tickets,
-      currentPage: parseInt(page),
+      currentPage: page,
       totalPages,
       totalTickets,
-      limit: parseInt(limit),
+      limit,
     });
   } catch (error) {
     console.error("Error al obtener boletos del usuario:", error);
@@ -198,7 +117,7 @@ const downloadTicket = async (req, res) => {
       include: [
         {
           model: Event,
-          as: "event",
+          as: "Event",
           where: { endDate: { [Op.gte]: new Date() } }, // evento vigente
         },
       ],
@@ -325,8 +244,6 @@ const generateLinks = async (req, res) => {
 
 module.exports = {
   sendTicketEmail,
-  createStripeSession,
-  stripeWebhook,
   getUserTickets,
   downloadTicket,
   validateTicket,

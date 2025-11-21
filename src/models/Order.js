@@ -52,6 +52,12 @@ const Order = sequelize.define(
       defaultValue: 0.0,
       comment: "Monto restante pendiente de pago",
     },
+    stockDiscounted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: "Marca si el stock ya fue descontado tras el pago inicial",
+    },
 
     // 🕒 Fechas importantes
     startDate: {

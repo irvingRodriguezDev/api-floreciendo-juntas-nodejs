@@ -23,9 +23,25 @@ const createInitialPaymentSession = async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: `${process.env.CLIENT_URL}/success`,
+      metadata: {
+        orderId,
+        type: "initial",
+        flow: "ORDER_PAYMENT",
+      },
+
+      // 👇 Aquí es donde realmente se aplican estas reglas
+      // automatic_payment_methods: { enabled: false }, // ❌ No permitir métodos automáticos
+      // setup_future_usage: null, // ❌ NO guardar tarjeta
+      payment_intent_data: {
+        metadata: {
+          orderId,
+          type: "initial",
+          flow: "ORDER_PAYMENT",
+        },
+      },
+
+      success_url: `${process.env.CLIENT_URL}/success-payment-partial`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
-      metadata: { orderId },
     });
 
     res.json({ url: session.url });
@@ -47,7 +63,6 @@ const createCustomPaymentSession = async (req, res) => {
       return res
         .status(400)
         .json({ error: "No puedes pagar después de la fecha límite" });
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
@@ -62,10 +77,28 @@ const createCustomPaymentSession = async (req, res) => {
           quantity: 1,
         },
       ],
+
       mode: "payment",
-      success_url: `${process.env.CLIENT_URL}/success`,
+
+      // 👇 Esto garantiza que NO haya reintentos automáticos
+      // setup_future_usage: null, // ❌ No guardar tarjeta
+      // automatic_payment_methods: { enabled: false }, // ❌ No usar métodos automáticos
+      metadata: {
+        orderId,
+        type: "partial",
+        flow: "ORDER_PAYMENT",
+      },
+
+      payment_intent_data: {
+        metadata: {
+          orderId,
+          type: "partial",
+          flow: "ORDER_PAYMENT",
+        },
+      },
+
+      success_url: `${process.env.CLIENT_URL}/success-payment-partial`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
-      metadata: { orderId },
     });
 
     res.json({ url: session.url });

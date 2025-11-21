@@ -1,14 +1,32 @@
 const { LambdaClient, InvokeCommand } = require("@aws-sdk/client-lambda");
-const { Event, User } = require("../models");
-const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-const getS3Url = require("./getS3Url");
+const fs = require("fs");
+require("dotenv").config();
 
-// Inicializar cliente Lambda
-const lambda = new LambdaClient({
+const lambdaClient = new LambdaClient({
   region: process.env.AWS_REGION || "us-east-2",
 });
+
 /**
- * 🎟️ Genera HTML del ticket con diseño premium
+ * Simular datos de ticket para prueba
+ */
+const mockTicketData = {
+  ticket: {
+    id: "TEST-001",
+    code: "ABC123XYZ789",
+  },
+  event: {
+    title: "Evento de Prueba 2025",
+    startDate: new Date("2025-12-25T19:00:00"),
+    time: "19:00",
+    location: "Centro de Convenciones - Ciudad de México",
+  },
+  user: {
+    name: "Ana María González",
+  },
+};
+
+/**
+ * Generar HTML del ticket (copia de tu función original)
  */
 const generateTicketHTML = (ticket, event, user) => {
   const formattedDate = event.startDate
@@ -40,12 +58,7 @@ const generateTicketHTML = (ticket, event, user) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background: #f3f4f6;
@@ -54,40 +67,15 @@ const generateTicketHTML = (ticket, event, user) => {
       align-items: center;
       padding: 0px;
     }
-
     .ticket-container {
       width: 595px;
       height: 280px;
       background: linear-gradient(180deg, #F3B9CD 0%, #F6C8D7 100%);
-      border-radius: 0;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       position: relative;
       overflow: hidden;
       display: flex;
     }
-
-    .ticket-container::before {
-      content: '';
-      position: absolute;
-      width: 360px;
-      height: 360px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(236, 72, 153, 0.05) 0%, transparent 70%);
-      top: -180px;
-      left: -100px;
-    }
-
-    .ticket-container::after {
-      content: '';
-      position: absolute;
-      width: 400px;
-      height: 400px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(139, 92, 246, 0.05) 0%, transparent 70%);
-      bottom: -200px;
-      right: -100px;
-    }
-
     .left-section {
       width: 210px;
       display: flex;
@@ -98,7 +86,6 @@ const generateTicketHTML = (ticket, event, user) => {
       position: relative;
       z-index: 1;
     }
-
     .ticket-label {
       font-size: 10px;
       font-weight: 600;
@@ -107,7 +94,6 @@ const generateTicketHTML = (ticket, event, user) => {
       margin-bottom: 20px;
       text-transform: uppercase;
     }
-
     .qr-wrapper {
       background: white;
       padding: 10px;
@@ -115,13 +101,11 @@ const generateTicketHTML = (ticket, event, user) => {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
       margin-bottom: 15px;
     }
-
     .qr-code {
       width: 140px;
       height: 140px;
       display: block;
     }
-
     .ticket-code {
       font-family: 'Courier New', monospace;
       font-size: 9px;
@@ -131,7 +115,6 @@ const generateTicketHTML = (ticket, event, user) => {
       text-align: center;
       margin-top: 10px;
     }
-
     .divider {
       width: 1px;
       background: linear-gradient(to bottom, #D72E79 50%, transparent 50%);
@@ -139,7 +122,6 @@ const generateTicketHTML = (ticket, event, user) => {
       background-repeat: repeat-y;
       position: relative;
     }
-
     .scissors {
       position: absolute;
       top: 50%;
@@ -150,7 +132,6 @@ const generateTicketHTML = (ticket, event, user) => {
       background: #D72E79;
       padding: 5px;
     }
-
     .right-section {
       background-color: #F3B9CD;
       flex: 1;
@@ -160,37 +141,10 @@ const generateTicketHTML = (ticket, event, user) => {
       position: relative;
       z-index: 1;
     }
-
-    .right-section::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background:
-        url('https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/TEDDY+CAROLINA+TAVERA+(1).png') center right 30px/65% no-repeat,
-        #F3B9CD;
-      background-blend-mode: multiply;
-      opacity: 0.3;
-      z-index: -1;
-    }
-
-    .accent-bar {
-      position: absolute;
-      top: 20px;
-      left: 30px;
-      right: 30px;
-      height: 3px;
-      background: linear-gradient(90deg, #ec4899 0%, #8b5cf6 100%);
-      border-radius: 2px;
-    }
-
     .attendee-section {
       margin-top: -10px;
       margin-bottom: 20px;
     }
-
     .label {
       font-size: 10px;
       font-weight: 600;
@@ -199,7 +153,6 @@ const generateTicketHTML = (ticket, event, user) => {
       margin-bottom: 5px;
       text-transform: uppercase;
     }
-
     .attendee-name {
       font-size: 16px;
       font-weight: bold;
@@ -207,7 +160,6 @@ const generateTicketHTML = (ticket, event, user) => {
       margin: 0;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
-
     .event-title {
       font-size: 20px;
       font-weight: bold;
@@ -217,11 +169,9 @@ const generateTicketHTML = (ticket, event, user) => {
       text-transform: uppercase;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
-
     .info-group {
       margin-bottom: 15px;
     }
-
     .info-content {
       font-size: 12px;
       color: #fff;
@@ -229,19 +179,15 @@ const generateTicketHTML = (ticket, event, user) => {
       line-height: 1.4;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
-
     .footer {
       margin-top: -10px;
-      padding-top: -20px;
     }
-
     .footer-text {
       font-size: 10px;
       color: #D72E79;
       font-style: italic;
       margin: 0 0 5px 0;
     }
-
     .ticket-id {
       font-size: 8px;
       font-weight: bold;
@@ -262,19 +208,15 @@ const generateTicketHTML = (ticket, event, user) => {
       </div>
       <div class="ticket-code">${ticket.code}</div>
     </div>
-
     <div class="divider">
       <div class="scissors">✂</div>
     </div>
-
     <div class="right-section">
       <div class="attendee-section">
         <div class="label">Asistente</div>
         <h2 class="attendee-name">${user.name || "Invitado Especial"}</h2>
       </div>
-
       <h1 class="event-title">${event.title || "Evento Especial"}</h1>
-
       <div class="info-group">
         <div class="label">📅 Fecha y Hora</div>
         <p class="info-content">${fullDateTime}</p>
@@ -295,46 +237,55 @@ const generateTicketHTML = (ticket, event, user) => {
 };
 
 /**
- * 🎟️ Genera un PDF invocando Lambda (sin Puppeteer local)
+ * 🧪 Probar generación de ticket real
  */
-const generateTicketPDF = async (ticket) => {
+const testTicketLambda = async () => {
   try {
-    const event = await Event.findByPk(ticket.eventId);
-    const user = await User.findOne({
-      where: { email: ticket.buyerEmail },
-    });
+    console.log("🎟️  Iniciando prueba con ticket real...\n");
 
-    if (!event || !user) {
-      throw new Error("Evento o usuario no encontrado");
-    }
-
+    const { ticket, event, user } = mockTicketData;
     const html = generateTicketHTML(ticket, event, user);
 
-    const cmd = new InvokeCommand({
-      FunctionName: process.env.LAMBDA_PDF_FUNCTION_NAME,
-      Payload: JSON.stringify({
-        html,
-        ticketId: ticket.id,
-      }),
+    const lambdaPayload = {
+      html: html,
+      width: "595px",
+      height: "280px",
+      fileName: `ticket_${ticket.id}.pdf`,
+    };
+
+    console.log("📤 Invocando Lambda...");
+    const startTime = Date.now();
+
+    const command = new InvokeCommand({
+      FunctionName:
+        process.env.LAMBDA_PDF_FUNCTION_NAME || "puppeteer-pdf-generator",
+      Payload: JSON.stringify(lambdaPayload),
     });
 
-    const raw = await lambda.send(cmd);
-    const response = JSON.parse(Buffer.from(raw.Payload).toString());
+    const lambdaResponse = await lambdaClient.send(command);
+    const duration = Date.now() - startTime;
 
-    if (response.statusCode !== 200) {
-      throw new Error(`Lambda error: ${response.body}`);
+    const responsePayload = JSON.parse(
+      Buffer.from(lambdaResponse.Payload).toString()
+    );
+
+    if (responsePayload.statusCode !== 200) {
+      throw new Error(`Lambda error: ${JSON.stringify(responsePayload)}`);
     }
 
-    const { key, url } = JSON.parse(response.body);
+    const pdfBuffer = Buffer.from(responsePayload.body, "base64");
+    const outputPath = `./ticket_${ticket.id}_test.pdf`;
+    fs.writeFileSync(outputPath, pdfBuffer);
 
-    // 👀 Opcional: si quieres formatear la URL con tu helper
-    const finalUrl = getS3Url ? getS3Url(key) : url;
-
-    return finalUrl;
-  } catch (err) {
-    console.error("Error generando PDF:", err);
-    throw err;
+    console.log(`\n✅ Ticket generado exitosamente!`);
+    console.log(`📁 Archivo: ${outputPath}`);
+    console.log(`📊 Tamaño: ${(pdfBuffer.length / 1024).toFixed(2)} KB`);
+    console.log(`⚡ Tiempo: ${duration}ms`);
+    console.log(`\n🎉 ¡Abre el PDF para verificar que se vea bien!\n`);
+  } catch (error) {
+    console.error("\n❌ Error:", error.message);
+    process.exit(1);
   }
 };
 
-module.exports = generateTicketPDF;
+testTicketLambda();

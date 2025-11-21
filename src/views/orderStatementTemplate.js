@@ -4,6 +4,28 @@ module.exports = function orderStatementTemplate(order) {
   const formatDate = (date) =>
     date ? format(new Date(date), "dd/MM/yyyy") : "-";
 
+  /** -----------------------
+   *  DETALLE DE PRODUCTOS
+   *  ----------------------*/
+  const itemsRows =
+    order.items && order.items.length > 0
+      ? order.items
+          .map(
+            (item) => `
+        <tr>
+          <td>${item.product?.name || "-"}</td>
+          <td>${item.quantity}</td>
+          <td>$${item.unitPrice}</td>
+          <td>$${item.subtotal}</td>
+        </tr>
+      `
+          )
+          .join("")
+      : `<tr><td colspan="4" style="text-align:center;">Sin productos registrados</td></tr>`;
+
+  /** -----------------------
+   *  HISTORIAL DE PAGOS
+   *  ----------------------*/
   const paymentsRows =
     order.payments.length > 0
       ? order.payments
@@ -22,47 +44,60 @@ module.exports = function orderStatementTemplate(order) {
           .join("")
       : `<tr><td colspan="6" style="text-align:center;">Sin pagos registrados</td></tr>`;
 
+  /** -----------------------
+   *  HTML COMPLETO
+   *  ----------------------*/
+
   return `
-  <!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <style>
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
+      margin: 0;
+      padding: 20px 30px; /* Mantienes tu espacio interno */
+      background-color: #fff6fa; /* Tu color de fondo */
       font-family: 'Helvetica Neue', Arial, sans-serif;
-      padding: 40px;
-      background-color: #fff6fa;
       color: #333;
     }
 
+    /* Header */
     header {
-      text-align: center;
-      margin-bottom: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      margin-bottom: 35px;
     }
 
     header img {
-      width: 110px;
+      position: absolute;
+      left: 0;
+      width: 130px;
       height: auto;
-      margin-bottom: 10px;
+    }
+
+    .title-container {
+      text-align: center;
+      width: 100%;
     }
 
     h1 {
       color: #d63384;
-      margin-bottom: 0;
-      font-size: 24px;
-      margin-top:-40px
+      margin: 0;
+      font-size: 26px;
     }
 
-    .subtitle {
-      color: #777;
-      font-size: 14px;
-      margin-top: 2px;
+    .issue-date {
+      text-align: right;
+      margin-bottom: 10px;
+      font-size: 13px;
     }
 
+    /* Sections */
     section {
       background-color: #ffffff;
       border-radius: 12px;
@@ -79,11 +114,7 @@ module.exports = function orderStatementTemplate(order) {
       margin-bottom: 12px;
     }
 
-    p {
-      font-size: 13px;
-      margin: 5px 0;
-    }
-
+    /* Tables */
     table {
       width: 100%;
       border-collapse: collapse;
@@ -107,15 +138,12 @@ module.exports = function orderStatementTemplate(order) {
       background-color: #fff2f7;
     }
 
+    /* Summary */
     .summary {
       text-align: right;
       margin-top: 25px;
       font-size: 14px;
       line-height: 1.6;
-    }
-
-    .summary p {
-      margin: 3px 0;
     }
 
     footer {
@@ -128,17 +156,19 @@ module.exports = function orderStatementTemplate(order) {
 </head>
 
 <body>
+
+  <div class="issue-date">
+    <b>Fecha de Emisión:</b> ${formatDate(new Date())}
+  </div>
+
   <header>
-    <p style="display: flex; justify-content: flex-end; text-align: right;">
-      <b>Fecha de Emisión:</b> ${formatDate(new Date())}
-    </p>
     <img 
       src="https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/logo_salon_de_tus_sue%C3%B1os" 
-      alt="Floreciendo Juntas Logo" 
-      style="display:flex; justify-content:flex-start; margin-top:-50px;    width:150px; height:110px; " 
+      alt="Logo"
     />
-    <h1>Estado de Cuenta</h1>
-
+    <div class="title-container">
+      <h1>Estado de Cuenta</h1>
+    </div>
   </header>
 
   <section>
@@ -154,6 +184,23 @@ module.exports = function orderStatementTemplate(order) {
     <p><b>Fecha Límite:</b> ${formatDate(order.dueDate)}</p>
     <p><b>Estatus:</b> ${order.status}</p>
     <p><b>Total Orden:</b> $${order.totalAmount}</p>
+  </section>
+
+  <section>
+    <h2>Detalle de Productos</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Cantidad</th>
+          <th>Precio Unitario</th>
+          <th>Subtotal</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsRows}
+      </tbody>
+    </table>
   </section>
 
   <section>
@@ -178,13 +225,14 @@ module.exports = function orderStatementTemplate(order) {
   <section class="summary">
     <p><b>Total Pagado:</b> $${order.paidAmount}</p>
     <p><b>Restante:</b> $${order.remainingAmount}</p>
-
   </section>
 
   <footer>
     Este documento es un comprobante informativo.  
     Gracias por ser parte de <b>Floreciendo Juntas</b> 💕
   </footer>
+
 </body>
-</html>`;
+</html>
+`;
 };

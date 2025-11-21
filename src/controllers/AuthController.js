@@ -156,6 +156,7 @@ const me = async (req, res) => {
         isSubscribed: isSubscribed, // Boolean: true/false
         profileImage: getS3Url(user.profileImage),
         member_since: user.createdAt,
+        stripe_id: user.stripe_id,
         // Puedes enviar los detalles de la suscripción activa si los necesitas en el front
         subscriptionDetails: isSubscribed
           ? {

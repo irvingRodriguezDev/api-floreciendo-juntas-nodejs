@@ -32,7 +32,7 @@ const generateCalendarLinks = (event, ticketUrl, ticketId) => {
   const title = encodeURIComponent(event.title);
   const location = encodeURIComponent(event.location || "Por confirmar");
   const description = encodeURIComponent(
-    `${cleanDescription}\n\nTu boleto: ${ticketUrl}\n\nPor favor presenta tu boleto al ingresar al evento.`
+    `${cleanDescription}\n\nTu boleto: ${ticketUrl}  \n\nPor favor presenta tu boleto al ingresar al evento.`
   );
 
   // URL base del backend para descargar el .ics
