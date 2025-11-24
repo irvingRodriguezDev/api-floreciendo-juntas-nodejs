@@ -463,8 +463,8 @@ const buyTicket = async (req, res) => {
           price_data: {
             currency: "mxn",
             product_data: {
-              name: `Boleto - ${event.title}`,
-              description: event.description || `Evento: ${event.title}`,
+              name: `Boleto para el evento - ${event.title}`,
+              // description: event.description || `Evento: ${event.title}`,
             },
             unit_amount: event.price * 100, // Precio en centavos
           },

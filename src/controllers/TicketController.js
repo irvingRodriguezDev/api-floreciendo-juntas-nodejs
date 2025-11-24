@@ -61,7 +61,7 @@ const getUserTickets = async (req, res) => {
             model: Event,
             as: "Event",
             where: {
-              endDate: { [Op.gte]: today }, // ✅ solo eventos vigentes
+              startDate: { [Op.gte]: today }, // ✅ solo eventos vigentes
             },
             attributes: [
               "id",

@@ -116,7 +116,7 @@ DTSTAMP:${now}Z
 DTSTART;TZID=America/Mexico_City:${startDate}
 DTEND;TZID=America/Mexico_City:${endDate}
 SUMMARY:${escapeICS(event.title)}
-DESCRIPTION:${escapeICS(cleanDescription)}\\n\\nTu boleto: ${ticketUrl}
+DESCRIPTION:${escapeICS(cleanDescription)}\\n\\n Tu boleto: ${ticketUrl}
 LOCATION:${escapeICS(event.location || "Por confirmar")}
 STATUS:CONFIRMED
 SEQUENCE:0
@@ -150,34 +150,41 @@ const generateCalendarButtonsHTML = (calendarLinks) => {
     <div style="margin: 30px 0; text-align: center;">
       <h3 style="color: #374151; margin-bottom: 15px;">📅 Agregar a tu calendario</h3>
       <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">
-        
+
         <a href="${calendarLinks.google}" 
            target="_blank"
            style="background: #4285f4; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
           📅 Google Calendar
         </a>
-        
-        <a href="${calendarLinks.apple}" 
-           download="evento.ics"
-           style="background: #000000; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          🍎 Apple Calendar
-        </a>
-        
+
         <a href="${calendarLinks.outlook}" 
            target="_blank"
            style="background: #0078d4; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
           📧 Outlook
         </a>
-        
+
         <a href="${calendarLinks.yahoo}" 
            target="_blank"
            style="background: #6001d2; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
           🟣 Yahoo
         </a>
-        
+
+        <!-- Apple Calendar (abre calendarios en iOS/macOS) -->
+        <a href="${calendarLinks.apple}"
+           style="background: #000000; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
+          🍎 Apple Calendar
+        </a>
+
+        <!-- Descarga directa ICS universal -->
+        <a href="${calendarLinks.ics}"
+           style="background: #4b5563; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
+          📥 Descargar .ICS
+        </a>
+
       </div>
+
       <p style="color: #6b7280; font-size: 12px; margin-top: 15px;">
-        Selecciona tu calendario favorito para recibir recordatorios automáticos
+        Selecciona tu calendario favorito o descarga el archivo ICS.
       </p>
     </div>
   `;
