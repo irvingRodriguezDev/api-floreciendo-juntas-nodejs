@@ -179,7 +179,9 @@ const getNewCourses = async (req, res) => {
       const data = course.toJSON();
 
       // Imagen de portada (solo la primera activa)
-      const coverImageUrl = data.images?.[0] ? data.images[0].s3_key : null;
+      const coverImageUrl = data.images?.[0]
+        ? getS3Url(data.images[0].s3_key)
+        : null;
 
       // Progreso del usuario (si existe)
       const userProgress =
