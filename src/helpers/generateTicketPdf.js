@@ -311,7 +311,8 @@ const generateTicketPDF = async (ticket) => {
     const html = generateTicketHTML(ticket, event, user);
 
     const cmd = new InvokeCommand({
-      FunctionName: process.env.LAMBDA_PDF_FUNCTION_NAME,
+      FunctionName:
+        process.env.LAMBDA_PDF_FUNCTION_NAME || "createLambdaPdfWithPuppeter",
       Payload: JSON.stringify({
         html,
         ticketId: ticket.id,

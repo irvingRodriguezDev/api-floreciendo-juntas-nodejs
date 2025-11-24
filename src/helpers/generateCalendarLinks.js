@@ -4,62 +4,78 @@ const moment = require("moment-timezone");
  * 📅 Genera enlaces para agregar evento a diferentes calendarios
  */
 const generateCalendarLinks = (event, ticketUrl, ticketId) => {
-  // Formatear fechas para calendarios (ISO 8601 sin guiones ni dos puntos)
-  const startDate = moment(event.startDate)
+  const moment = require("moment-timezone");
+
+  // ✅ Fechas en México para Google Calendar & ICS
+  const startDateLocal = moment(event.startDate)
     .tz("America/Mexico_City")
     .format("YYYYMMDDTHHmmss");
 
-  // Si no hay endDate, asumir 2 horas de duración
-  const endDate = event.endDate
+  const endDateLocal = event.endDate
     ? moment(event.endDate).tz("America/Mexico_City").format("YYYYMMDDTHHmmss")
     : moment(event.startDate)
         .tz("America/Mexico_City")
-        .add(12, "hours")
+        .add(2, "hours")
         .format("YYYYMMDDTHHmmss");
 
-  // Limpiar descripción de HTML
+  // ✅ Fechas en UTC para Outlook & Yahoo
+  const startDateUTC = moment(event.startDate)
+    .utc()
+    .format("YYYYMMDDTHHmmss[Z]");
+
+  const endDateUTC = event.endDate
+    ? moment(event.endDate).utc().format("YYYYMMDDTHHmmss[Z]")
+    : moment(event.startDate)
+        .utc()
+        .add(2, "hours")
+        .format("YYYYMMDDTHHmmss[Z]");
+
+  // ✅ Limpieza de descripción HTML
   const cleanDescription = event.description
     ? event.description
-        .replace(/<[^>]*>/g, "") // Eliminar todas las etiquetas HTML
+        .replace(/<[^>]*>/g, "")
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
-        .replace(/\r\n/g, "\n")
         .trim()
     : "";
 
   const title = encodeURIComponent(event.title);
   const location = encodeURIComponent(event.location || "Por confirmar");
   const description = encodeURIComponent(
-    `${cleanDescription}\n\nTu boleto: ${ticketUrl}  \n\nPor favor presenta tu boleto al ingresar al evento.`
+    `${cleanDescription}\n\nTu boleto: ${ticketUrl}\n\n Por favor presenta tu boleto al ingresar al evento.`
   );
 
-  // URL base del backend para descargar el .ics
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
+  // ✅ URL del backend asegurada en HTTPS
+  const backendUrl = (
+    process.env.BACKEND_URL || "https://api.floreciendojuntas.com"
+  ).replace(/\/$/, "");
+
+  const icsDownloadUrl = `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`;
 
   return {
-    // 🟢 Google Calendar
-    google: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startDate}/${endDate}&details=${description}&location=${location}&ctz=America/Mexico_City`,
+    // ✅ Google Calendar
+    google: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startDateLocal}/${endDateLocal}&details=${description}&location=${location}&ctz=America/Mexico_City`,
 
-    // 🍎 Apple Calendar / iCal (descarga archivo .ics)
-    apple: `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`,
+    // ✅ Apple Calendar / iOS — usa webcal:// para abrir la app directament
+    apple: `webcal://${backendUrl.replace(/^https?:\/\//, "")}/api/events/${event.id}/${ticketId}/calendar`,
 
-    // 🔵 Outlook.com
-    outlook: `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${event.startDate}&enddt=${event.endDate || event.startDate}&location=${location}&body=${description}&path=/calendar/action/compose&rru=addevent`,
+    // ✅ Outlook.com + App de escritori
+    outlook: `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${startDateUTC}&enddt=${endDateUTC}&body=${description}&location=${location}&path=/calendar/action/compose&rru=addevent`,
 
-    // 🟣 Yahoo Calendar
-    yahoo: `https://calendar.yahoo.com/?v=60&title=${title}&st=${startDate}&et=${endDate}&desc=${description}&in_loc=${location}`,
+    // ✅ Yahoo Calendar
+    yahoo: `https://calendar.yahoo.com/?v=60&title=${title}&st=${startDateUTC}&et=${endDateUTC}&desc=${description}&in_loc=${location}`,
 
-    // 📥 Descarga directa ICS
-    ics: `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`,
+    // ✅ Descarga directa del .ics
+    ics: icsDownloadUrl,
   };
 };
 
 /**
  * 📄 Genera archivo .ics para Apple Calendar, Outlook Desktop, etc.
  */
-const generateICSFile = (event, ticketUrl) => {
+const generateICSFile = (event, ticketUrl, ticketId) => {
   const startDate = moment(event.startDate)
     .tz("America/Mexico_City")
     .format("YYYYMMDDTHHmmss");
@@ -71,75 +87,43 @@ const generateICSFile = (event, ticketUrl) => {
         .add(2, "hours")
         .format("YYYYMMDDTHHmmss");
 
-  const now = moment().format("YYYYMMDDTHHmmss");
+  const now = moment().utc().format("YYYYMMDDTHHmmss");
 
-  // Limpiar descripción de HTML
-  const cleanDescription = event.description
-    ? event.description
-        .replace(/<[^>]*>/g, "") // Eliminar todas las etiquetas HTML
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/\r\n/g, "\n")
-        .trim()
-    : "";
+  const cleanDescription = (event.description || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
 
-  // Escape de caracteres especiales en ICS
-  const escapeICS = (str) => {
-    if (!str) return "";
-    return str
+  const escapeICS = (str) =>
+    (str || "")
       .replace(/\\/g, "\\\\")
       .replace(/;/g, "\\;")
       .replace(/,/g, "\\,")
       .replace(/\n/g, "\\n");
-  };
 
-  const icsContent = `BEGIN:VCALENDAR
+  let ics = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Tu Empresa//Ticket System//ES
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
 X-WR-TIMEZONE:America/Mexico_City
-BEGIN:VTIMEZONE
-TZID:America/Mexico_City
-BEGIN:STANDARD
-DTSTART:20201101T020000
-TZOFFSETFROM:-0500
-TZOFFSETTO:-0600
-RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU
-END:STANDARD
-BEGIN:DAYLIGHT
-DTSTART:20210314T020000
-TZOFFSETFROM:-0600
-TZOFFSETTO:-0500
-RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU
-END:DAYLIGHT
-END:VTIMEZONE
 BEGIN:VEVENT
-UID:ticket-${event.id}-${now}@tuempresa.com
+UID:ticket-${ticketId}@tuempresa.com
 DTSTAMP:${now}Z
 DTSTART;TZID=America/Mexico_City:${startDate}
 DTEND;TZID=America/Mexico_City:${endDate}
 SUMMARY:${escapeICS(event.title)}
-DESCRIPTION:${escapeICS(cleanDescription)}\\n\\nTu boleto: ${ticketUrl}\\n\\nPor favor presenta tu boleto xd al ingresar al evento.
+DESCRIPTION:${escapeICS(cleanDescription)}\\n\\nTu boleto: ${ticketUrl}
 LOCATION:${escapeICS(event.location || "Por confirmar")}
 STATUS:CONFIRMED
 SEQUENCE:0
-BEGIN:VALARM
-TRIGGER:-PT24H
-ACTION:DISPLAY
-DESCRIPTION:Recordatorio: ${escapeICS(event.title)} es mañana
-END:VALARM
-BEGIN:VALARM
-TRIGGER:-PT2H
-ACTION:DISPLAY
-DESCRIPTION:Recordatorio: ${escapeICS(event.title)} comienza en 2 horas
-END:VALARM
 END:VEVENT
 END:VCALENDAR`;
 
-  return icsContent;
+  return ics.replace(/\n/g, "\r\n");
 };
 
 /**

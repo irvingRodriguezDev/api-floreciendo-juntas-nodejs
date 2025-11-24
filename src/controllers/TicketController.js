@@ -46,6 +46,8 @@ const getUserTickets = async (req, res) => {
     }
 
     const today = new Date();
+    today.setHours(0, 0, 0, 0); // evita problemas de zona horaria
+
     const offset = (page - 1) * limit;
 
     const { rows: tickets, count: totalTickets } = await Ticket.findAndCountAll(
@@ -57,9 +59,9 @@ const getUserTickets = async (req, res) => {
         include: [
           {
             model: Event,
-            as: "Event", // <-- asegúrate del alias correcto
+            as: "Event",
             where: {
-              startDate: { [Op.gte]: today },
+              endDate: { [Op.gte]: today }, // ✅ solo eventos vigentes
             },
             attributes: [
               "id",
@@ -78,15 +80,9 @@ const getUserTickets = async (req, res) => {
       }
     );
 
-    if (tickets.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "No se encontraron boletos vigentes" });
-    }
-
     const totalPages = Math.ceil(totalTickets / limit);
 
-    res.status(200).json({
+    return res.status(200).json({
       tickets,
       currentPage: page,
       totalPages,
@@ -95,7 +91,9 @@ const getUserTickets = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al obtener boletos del usuario:", error);
-    res.status(500).json({ message: "Error al obtener boletos del usuario" });
+    return res
+      .status(500)
+      .json({ message: "Error al obtener boletos del usuario" });
   }
 };
 

@@ -115,7 +115,10 @@ const getEvents = async (req, res) => {
   try {
     const search = (req.query.search || "").trim();
 
-    // Campos esenciales del evento + COUNT de tickets libres
+    // Fecha actual sin horas para evitar falsos vencidos
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     const eventAttributes = [
       "id",
       "title",
@@ -136,11 +139,12 @@ const getEvents = async (req, res) => {
       ],
     ];
 
-    // 🟢 Modo búsqueda sin paginación
+    // ✅ Modo búsqueda
     if (search) {
       const events = await Event.findAll({
         attributes: eventAttributes,
         where: {
+          endDate: { [Op.gte]: today }, // ✅ Solo vigentes
           [Op.or]: [
             { title: { [Op.like]: `%${search}%` } },
             { description: { [Op.like]: `%${search}%` } },
@@ -164,13 +168,16 @@ const getEvents = async (req, res) => {
       });
     }
 
-    // 🟢 Modo paginación normal
+    // ✅ Modo paginado normal
     const page = Math.max(parseInt(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
     const offset = (page - 1) * limit;
 
     const { count, rows } = await Event.findAndCountAll({
       attributes: eventAttributes,
+      where: {
+        endDate: { [Op.gte]: today }, // ✅ Solo vigentes
+      },
       distinct: true,
       col: "id",
       limit,
@@ -180,7 +187,7 @@ const getEvents = async (req, res) => {
 
     const formatted = rows.map((event) => ({
       ...event.toJSON(),
-      image: event.image ? event.image : null,
+      image: event.image || null,
       availableTickets: parseInt(event.get("availableTickets"), 10),
     }));
 
@@ -199,14 +206,22 @@ const getEvents = async (req, res) => {
 
 const getLatestEvents = async (req, res) => {
   try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     const events = await Event.findAll({
+      where: {
+        endDate: { [Op.gte]: today }, // ✅ Solo eventos vigentes
+      },
       limit: 4,
       order: [["createdAt", "DESC"]],
     });
+
     const formatted = events.map((e) => ({
       ...e.toJSON(),
-      image: e.image ? e.image : null,
+      image: e.image || null,
     }));
+
     return res.status(200).json({
       success: true,
       count: formatted.length,
@@ -517,40 +532,47 @@ const getSimilarEvents = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1️⃣ Obtener el evento principal
+    // 1️⃣ Obtener evento principal
     const mainEvent = await Event.findByPk(id);
     if (!mainEvent) {
       return res.status(404).json({ message: "Evento no encontrado" });
     }
 
-    // 2️⃣ Buscar 3 eventos similares (mismo location, distinto id)
+    // 2️⃣ Fecha actual sin horas (evita falsos expirados)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 3️⃣ Buscar eventos similares vigentes
     const similarEvents = await Event.findAll({
       where: {
         id: { [Op.ne]: mainEvent.id }, // distinto evento
         location: mainEvent.location, // mismo lugar
+        endDate: { [Op.gte]: today }, // ✅ solo vigentes
       },
       limit: 3,
       order: [["createdAt", "DESC"]],
     });
 
-    // 3️⃣ Formatear imágenes S3
+    // 4️⃣ Formatear imágenes
     const formatted = similarEvents.map((event) => ({
       ...event.toJSON(),
-      image: event.image ? event.image : null,
+      image: event.image || null,
     }));
 
-    res.json({
+    return res.json({
       mainEvent: {
         id: mainEvent.id,
         title: mainEvent.title,
         location: mainEvent.location,
-        image: mainEvent.image ? mainEvent.image : null,
+        image: mainEvent.image || null,
       },
       similarEvents: formatted,
     });
   } catch (error) {
     console.error("Error obteniendo eventos similares:", error);
-    res.status(500).json({ message: "Error obteniendo eventos similares" });
+    return res.status(500).json({
+      message: "Error obteniendo eventos similares",
+    });
   }
 };
 
