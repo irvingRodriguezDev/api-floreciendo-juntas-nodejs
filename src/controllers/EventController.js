@@ -144,7 +144,7 @@ const getEvents = async (req, res) => {
       const events = await Event.findAll({
         attributes: eventAttributes,
         where: {
-          endDate: { [Op.gte]: today }, // ✅ Solo vigentes
+          startDate: { [Op.gte]: today }, // ✅ Solo vigentes
           [Op.or]: [
             { title: { [Op.like]: `%${search}%` } },
             { description: { [Op.like]: `%${search}%` } },
@@ -176,7 +176,7 @@ const getEvents = async (req, res) => {
     const { count, rows } = await Event.findAndCountAll({
       attributes: eventAttributes,
       where: {
-        endDate: { [Op.gte]: today }, // ✅ Solo vigentes
+        startDate: { [Op.gte]: today }, // ✅ Solo vigentes
       },
       distinct: true,
       col: "id",
@@ -211,7 +211,7 @@ const getLatestEvents = async (req, res) => {
 
     const events = await Event.findAll({
       where: {
-        endDate: { [Op.gte]: today }, // ✅ Solo eventos vigentes
+        startDate: { [Op.gte]: today }, // ✅ Solo eventos vigentes
       },
       limit: 4,
       order: [["createdAt", "DESC"]],
@@ -547,7 +547,7 @@ const getSimilarEvents = async (req, res) => {
       where: {
         id: { [Op.ne]: mainEvent.id }, // distinto evento
         location: mainEvent.location, // mismo lugar
-        endDate: { [Op.gte]: today }, // ✅ solo vigentes
+        startDate: { [Op.gte]: today }, // ✅ solo vigentes
       },
       limit: 3,
       order: [["createdAt", "DESC"]],
