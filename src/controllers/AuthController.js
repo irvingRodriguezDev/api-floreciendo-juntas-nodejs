@@ -12,7 +12,7 @@ const sequelize = require("../config/db");
 // Registro normal (usuario final)
 const register = async (req, res) => {
   try {
-    const { password, email, name, phone } = req.body;
+    const { password, email, name, phone, username } = req.body;
     // Verificar si el usuario ya existe
     const exists = await User.findOne({ where: { email } });
     if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
@@ -32,6 +32,7 @@ const register = async (req, res) => {
       email,
       name,
       phone,
+      username,
       password: hashedPassword,
       roleId: 4,
       stripe_id: stripeCustomer.id,
@@ -57,6 +58,7 @@ const register = async (req, res) => {
         email: newUser.email,
         phone: newUser.phone,
         name: newUser.name,
+        username: newUser.username,
         roleId: newUser.roleId,
         stripe_id: newUser.stripe_id,
       },
@@ -110,6 +112,7 @@ const me = async (req, res) => {
         "id",
         "email",
         "name",
+        "username",
         "stripe_id",
         "profileImage",
         "phone",
@@ -151,6 +154,7 @@ const me = async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
+        username: user.username,
         phone: user.phone,
         roleId: user.roleId,
         isSubscribed: isSubscribed, // Boolean: true/false
@@ -162,6 +166,7 @@ const me = async (req, res) => {
           ? {
               type: activeSubscription.subscription_type,
               status: activeSubscription.status,
+              startDate: activeSubscription.start_date,
               endDate: activeSubscription.end_date,
               nextRenewal: activeSubscription.next_renewal,
             }
@@ -180,7 +185,7 @@ const createUserWithRole = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { name, password, roleId, email, phone } = req.body;
+    const { name, password, roleId, email, phone, username } = req.body;
 
     // Validar rol
     if (roleId < 2 || roleId > 5) {
@@ -204,6 +209,7 @@ const createUserWithRole = async (req, res) => {
     const newUser = await User.create(
       {
         name,
+        username,
         email,
         password: hashedPassword,
         roleId,
@@ -238,6 +244,7 @@ const createUserWithRole = async (req, res) => {
         id: newUser.id,
         email: newUser.email,
         name: newUser.name,
+        username: newUser.username,
         roleId: newUser.roleId,
         profileImage: newUser.profileImage
           ? getS3Url(newUser.profileImage)

@@ -402,7 +402,7 @@ const getTopViewedCourses = async (req, res) => {
     // return res.json(topCourses);
     const formatted = topCourses.map((c) => ({
       ...c.toJSON(),
-      cover_image_url: c.course ? c.course.images[0].s3_key : null,
+      cover_image_url: c.course ? getS3Url(c.course.images[0].s3_key) : null,
       title: c.course ? c.course.title : null,
     }));
 

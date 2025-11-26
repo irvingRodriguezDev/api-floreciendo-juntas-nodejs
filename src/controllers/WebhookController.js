@@ -72,9 +72,12 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
           price_id: priceId,
           userId,
           status: "active",
-          start_date: new Date(),
+          start_date: now,
           end_date: subscriptionType === "ONETIME" ? getExpirationDate() : null,
-          next_renewal: null,
+          next_renewal:
+            subscriptionType === "RECURRING"
+              ? new Date(now.setDate(now.getDate() + 30))
+              : null,
         });
 
         // 👉 Actualizar usuario

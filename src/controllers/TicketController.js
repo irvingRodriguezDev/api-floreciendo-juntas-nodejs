@@ -116,7 +116,7 @@ const downloadTicket = async (req, res) => {
         {
           model: Event,
           as: "Event",
-          where: { endDate: { [Op.gte]: new Date() } }, // evento vigente
+          where: { startDate: { [Op.gte]: new Date() } }, // evento vigente
         },
       ],
     });
@@ -126,13 +126,10 @@ const downloadTicket = async (req, res) => {
         .status(404)
         .json({ message: "Boleto no encontrado o evento expirado" });
     }
+    const url = `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticket.id}`;
 
     // Obtener la URL del PDF desde S3
-    const pdfUrl = await getS3Url(
-      process.env.AWS_S3_ENVIRONMENT,
-      "tickets",
-      `${ticket.id}`
-    );
+    const pdfUrl = await getS3Url(url);
 
     if (!pdfUrl) {
       return res
