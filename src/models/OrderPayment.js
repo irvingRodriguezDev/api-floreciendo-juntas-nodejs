@@ -37,7 +37,7 @@ const OrderPayment = sequelize.define(
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("initial", "partial"),
+      type: DataTypes.ENUM("initial", "partial", "shipping"),
       allowNull: false,
     },
     reference: {

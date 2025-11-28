@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const {
   Cart,
   CartItem,
@@ -6,6 +7,7 @@ const {
   User,
   OrderPayment,
   OrderItem,
+  Address,
 } = require("../models");
 
 const { sequelize } = require("../models");
@@ -15,6 +17,7 @@ const createOrderFromCart = async (req, res) => {
 
   try {
     const userId = req.user.id;
+    const { AddressId } = req.body;
 
     // 1️⃣ Verificar si ya existe una orden activa para el usuario
     const activeOrder = await Order.findOne({
@@ -77,12 +80,13 @@ const createOrderFromCart = async (req, res) => {
 
     // 5️⃣ Fecha de vencimiento (90 días)
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 90);
+    dueDate.setDate(dueDate.getDate() + 180);
 
     // 6️⃣ Crear Orden
     const order = await Order.create(
       {
         userId,
+        deliveryAddressId: AddressId,
         cartId: cart.id,
         totalAmount,
         paidAmount: 0,
@@ -192,6 +196,10 @@ const getOrderDetail = async (req, res) => {
           model: OrderPayment,
           as: "payments",
         },
+        {
+          model: Address,
+          as: "address",
+        },
       ],
     });
 
@@ -214,8 +222,110 @@ const getOrderDetail = async (req, res) => {
   }
 };
 
+const getOrdersAdmin = async (req, res) => {
+  try {
+    // 🧾 Obtener órdenes con pagos asociados
+    const orders = await Order.findAll({
+      where: {
+        status: {
+          [Op.or]: ["pagado", "envio_asignado", "envio_pagado"],
+        },
+      },
+      include: [
+        {
+          model: OrderPayment,
+          as: "payments",
+          attributes: [
+            "id",
+            "amount",
+            "paymentMethod",
+            "status",
+            "reference",
+            "type",
+            "paymentDate",
+          ],
+          order: [["paymentDate", "DESC"]],
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "phone"],
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener órdenes:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+const assignamentShippingCost = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { shippingCost } = req.body;
+
+    const order = await Order.findByPk(orderId, {
+      include: [
+        { model: Address, as: "address" },
+        { model: User, as: "user" },
+      ],
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        message: "No se encontró la orden con el ID especificado",
+      });
+    }
+
+    // No permitir modificar envío si ya fue pagado
+    if (order.shippingPaid) {
+      return res.status(400).json({
+        message: "El costo de envío ya fue pagado y no puede modificarse.",
+      });
+    }
+
+    const newShipping = parseFloat(shippingCost) || 0;
+
+    // Actualizar SOLO campos de envío
+    await order.update({
+      shippingCost: newShipping,
+      shippingPaid: false, // por si acaso
+      status: "envio_asignado",
+    });
+
+    const updatedOrder = await Order.findByPk(orderId, {
+      include: [
+        { model: Address, as: "address" },
+        { model: User, as: "user" },
+      ],
+    });
+
+    return res.status(200).json({
+      message: "Costo de envío asignado correctamente",
+      order: updatedOrder,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Error interno del servidor",
+    });
+  }
+};
+
 module.exports = {
   createOrderFromCart,
   getUserOrders,
   getOrderDetail,
+  getOrdersAdmin,
+  assignamentShippingCost,
 };

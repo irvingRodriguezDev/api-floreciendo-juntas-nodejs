@@ -82,11 +82,14 @@ const Order = sequelize.define(
     // ⚙️ Estado general de la orden
     status: {
       type: DataTypes.ENUM(
-        "pendiente", // creada, sin pagos
-        "activo", // con al menos un pago, aún con saldo
-        "pagado", // saldo = 0
-        "vencido", // plazo de 3 meses vencido y saldo > 0
-        "cancelado" // cancelada manualmente
+        "pendiente", // Orden creada, sin pagos de productos
+        "activo", // Tiene pagos, pero aún debe productos
+        "pagado", // Productos totalmente pagados, falta costo de envío
+        "envio_asignado", // Admin añadió shippingCost, client aún no lo paga
+        "envio_pagado", // Envío pagado
+        "completado", // Productos + envío pagados
+        "vencido", // Pasó plazo y productos NO están 100% pagados
+        "cancelado" // Cancelada manualmente
       ),
       allowNull: false,
       defaultValue: "pendiente",
@@ -97,6 +100,27 @@ const Order = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
       comment: "Notas administrativas o internas sobre el pedido",
+    },
+    shippingCost: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: true,
+      defaultValue: 0.0,
+    },
+
+    shippingPaid: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
+
+    deliveryAddressId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: "addresses",
+        key: "id",
+      },
+      onDelete: "SET NULL",
     },
   },
   {

@@ -296,6 +296,37 @@ const handleOrderPaymentStripeWebhook = async (req, res) => {
           await t.rollback();
           return res.json({ received: true });
         }
+        // =========================
+        //  🚚 SI EL PAGO ES DE ENVÍO
+        // =========================
+        if (paymentType === "shipping") {
+          if (order.shippingPaid) {
+            await t.rollback();
+            return res.json({ received: true });
+          }
+
+          await OrderPayment.create(
+            {
+              orderId,
+              amount,
+              paymentDate: new Date(),
+              paymentMethod: "tarjeta",
+              status: "completado",
+              type: "shipping",
+              reference,
+            },
+            { transaction: t }
+          );
+
+          await order.update(
+            { shippingPaid: true, status: "envio_pagado" },
+            { transaction: t }
+          );
+
+          await t.commit();
+          console.log(`🚚 Pago de envío registrado para la orden #${orderId}`);
+          return res.json({ received: true });
+        }
 
         // ============================================
         // 🔥 DESCONTAR STOCK (solo si NO se ha descontado antes)

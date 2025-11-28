@@ -26,6 +26,7 @@ const Order = require("./Order");
 const OrderPayment = require("./OrderPayment");
 const RemindersLog = require("./RemindersLog");
 const OrderItem = require("./OrdenItem");
+const Address = require("./Adress");
 // Registrar modelos
 const db = {
   sequelize,
@@ -52,12 +53,14 @@ const db = {
   OrderPayment,
   RemindersLog,
   OrderItem,
+  Address,
 };
 
 // 🔹 Relaciones entre Role y User
 Role.hasMany(User, { as: "users", foreignKey: "roleId" });
 User.belongsTo(Role, { as: "role", foreignKey: "roleId" });
-
+User.hasMany(Address, { foreignKey: "userId" });
+Address.belongsTo(User, { foreignKey: "userId" });
 // 🔹 Relaciones entre Product y ProductImage
 Product.hasOne(ProductImage, { foreignKey: "product_id", as: "image" });
 ProductImage.belongsTo(Product, { foreignKey: "product_id" });
@@ -82,7 +85,7 @@ Order.belongsTo(User, {
 // Una orden tiene muchos orderItems
 Order.hasMany(OrderItem, { foreignKey: "orderId", as: "items" });
 OrderItem.belongsTo(Order, { foreignKey: "orderId", as: "order" });
-
+Order.belongsTo(Address, { foreignKey: "deliveryAddressId", as: "address" });
 // Un producto puede estar en muchas órdenes
 Product.hasMany(OrderItem, { foreignKey: "productId", as: "orderItems" });
 OrderItem.belongsTo(Product, { foreignKey: "productId", as: "product" });
