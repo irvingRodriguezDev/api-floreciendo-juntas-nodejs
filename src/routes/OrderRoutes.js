@@ -15,5 +15,11 @@ router.post(
   "/assignShippingCost/:orderId",
   OrderController.assignamentShippingCost
 );
+router.get("/active", OrderController.getOrdersActiveAdmin);
+router.get("/completed", OrderController.getOrdersCompletedAdmin);
+router.get("/shipp-payed", OrderController.getOrdersShippPayed);
+router.get("/shipped", OrderController.getOrdersShipped);
+router.put("/:id/shipping-info", OrderController.updateShippingInfo);
+router.get("/detail/:order_id", OrderController.getOrderDetailAdmin);
 router.get("/:orderId", OrderController.getOrderDetail);
 module.exports = router;

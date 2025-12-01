@@ -24,7 +24,7 @@ module.exports = function orderStatementTemplate(order) {
       : `<tr><td colspan="4" style="text-align:center;">Sin productos registrados</td></tr>`;
 
   /** -----------------------
-   *  HISTORIAL DE PAGOS
+   *  HISTORIAL DE PAGOS (Incluye shipping)
    *  ----------------------*/
   const paymentsRows =
     order.payments.length > 0
@@ -34,7 +34,17 @@ module.exports = function orderStatementTemplate(order) {
         <tr>
           <td>${formatDate(p.paymentDate)}</td>
           <td>${p.paymentMethod}</td>
-          <td>${p.type === "initial" ? "Pago inicial" : "Abono"}</td>
+          <td>
+            ${
+              p.type === "initial"
+                ? "Pago inicial"
+                : p.type === "partial"
+                  ? "Abono"
+                  : p.type === "shipping"
+                    ? "Pago de envío"
+                    : p.type
+            }
+          </td>
           <td>${p.status}</td>
           <td>$${p.amount}</td>
           <td>${p.reference || "-"}</td>
@@ -45,9 +55,21 @@ module.exports = function orderStatementTemplate(order) {
       : `<tr><td colspan="6" style="text-align:center;">Sin pagos registrados</td></tr>`;
 
   /** -----------------------
+   *  DIRECCIÓN FORMATEADA
+   *  ----------------------*/
+  const address = order.address
+    ? `
+      ${order.address.street} ${order.address.number},
+      ${order.address.neighborhood},
+      ${order.address.city}, ${order.address.state}, Telefono: ${order.address.phoneNumber},
+      CP: ${order.address.zipCode}, <br/>
+      Referencias: ${order.address.instructions}
+    `
+    : "Sin dirección registrada";
+
+  /** -----------------------
    *  HTML COMPLETO
    *  ----------------------*/
-
   return `
  <!DOCTYPE html>
 <html lang="es">
@@ -58,13 +80,12 @@ module.exports = function orderStatementTemplate(order) {
 
     body {
       margin: 0;
-      padding: 20px 30px; /* Mantienes tu espacio interno */
-      background-color: #fff6fa; /* Tu color de fondo */
+      padding: 20px 30px;
+      background-color: #fff6fa;
       font-family: 'Helvetica Neue', Arial, sans-serif;
       color: #333;
     }
 
-    /* Header */
     header {
       display: flex;
       align-items: center;
@@ -97,7 +118,6 @@ module.exports = function orderStatementTemplate(order) {
       font-size: 13px;
     }
 
-    /* Sections */
     section {
       background-color: #ffffff;
       border-radius: 12px;
@@ -114,7 +134,6 @@ module.exports = function orderStatementTemplate(order) {
       margin-bottom: 12px;
     }
 
-    /* Tables */
     table {
       width: 100%;
       border-collapse: collapse;
@@ -138,12 +157,29 @@ module.exports = function orderStatementTemplate(order) {
       background-color: #fff2f7;
     }
 
-    /* Summary */
     .summary {
       text-align: right;
       margin-top: 25px;
       font-size: 14px;
       line-height: 1.6;
+    }
+
+    .badge-paid {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: #66bb6a;
+      color: white;
+      font-size: 12px;
+    }
+
+    .badge-unpaid {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: #d32f2f;
+      color: white;
+      font-size: 12px;
     }
 
     footer {
@@ -162,10 +198,7 @@ module.exports = function orderStatementTemplate(order) {
   </div>
 
   <header>
-    <img 
-      src="https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/logo_salon_de_tus_sue%C3%B1os" 
-      alt="Logo"
-    />
+    <img src="https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/logo_salon_de_tus_sue%C3%B1os" />
     <div class="title-container">
       <h1>Estado de Cuenta</h1>
     </div>
@@ -178,12 +211,23 @@ module.exports = function orderStatementTemplate(order) {
   </section>
 
   <section>
+    <h2>Dirección de Envío</h2>
+    <p>${address}</p>
+  </section>
+
+  <section>
     <h2>Información de la Orden</h2>
     <p><b>ID Orden:</b> ${order.id}</p>
     <p><b>Fecha de Creación:</b> ${formatDate(order.createdAt)}</p>
-    <p><b>Fecha Límite:</b> ${formatDate(order.dueDate)}</p>
+    <p><b>Fecha Límite de pago:</b> ${formatDate(order.dueDate)}</p>
     <p><b>Estatus:</b> ${order.status}</p>
     <p><b>Total Orden:</b> $${order.totalAmount}</p>
+    <p><b>Costo de Envío:</b> $${order.shippingCost}</p>
+    <p><b>Envío Pagado:</b> ${
+      order.shippingPaid
+        ? `<span class="badge-paid">Sí</span>`
+        : `<span class="badge-unpaid">No</span>`
+    }</p>
   </section>
 
   <section>
@@ -233,6 +277,5 @@ module.exports = function orderStatementTemplate(order) {
   </footer>
 
 </body>
-</html>
-`;
+</html>`;
 };

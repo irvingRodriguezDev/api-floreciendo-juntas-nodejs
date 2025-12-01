@@ -122,6 +122,23 @@ const Order = sequelize.define(
       },
       onDelete: "SET NULL",
     },
+    trackingNumber: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "Número de guía o código de rastreo del envío",
+    },
+
+    carrier: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "Nombre de la paquetería: DHL, FedEx, Estafeta, etc.",
+    },
+
+    trackingUrl: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: "URL directa para rastrear el paquete",
+    },
   },
   {
     tableName: "orders",

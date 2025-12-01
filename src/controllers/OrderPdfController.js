@@ -1,5 +1,12 @@
 const { LambdaClient, InvokeCommand } = require("@aws-sdk/client-lambda");
-const { Order, OrderPayment, User, OrderItem, Product } = require("../models");
+const {
+  Order,
+  OrderPayment,
+  User,
+  OrderItem,
+  Product,
+  Address,
+} = require("../models");
 const orderStatementTemplate = require("../views/orderStatementTemplate");
 
 const lambdaClient = new LambdaClient({
@@ -14,6 +21,24 @@ const generateOrderAccountStatement = async (req, res) => {
     const order = await Order.findByPk(orderId, {
       include: [
         { model: User, as: "user", attributes: ["name", "email"] },
+
+        // Traer dirección de envío
+        {
+          model: Address,
+          as: "address",
+          attributes: [
+            "street",
+            "recipientName",
+            "number",
+            "phoneNumber",
+            "neighborhood",
+            "city",
+            "state",
+            "zipCode",
+            "instructions",
+          ],
+        },
+
         {
           model: OrderItem,
           as: "items",
@@ -26,6 +51,7 @@ const generateOrderAccountStatement = async (req, res) => {
             },
           ],
         },
+
         {
           model: OrderPayment,
           as: "payments",

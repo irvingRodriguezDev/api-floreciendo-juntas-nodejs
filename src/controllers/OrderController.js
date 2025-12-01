@@ -321,6 +321,296 @@ const assignamentShippingCost = async (req, res) => {
     });
   }
 };
+const getOrdersActiveAdmin = async (req, res) => {
+  try {
+    const orders = await Order.findAll({
+      where: {
+        status: "activo", // no necesitas el OR si solo es un valor
+      },
+      include: [
+        {
+          model: OrderPayment,
+          as: "payments",
+          attributes: [
+            "id",
+            "amount",
+            "paymentMethod",
+            "status",
+            "reference",
+            "type",
+            "paymentDate",
+          ],
+          separate: true, // 🔥 IMPORTANTE para que el order funcione
+          order: [["paymentDate", "DESC"]], // 🔥 Ahora sí ordena los pagos
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "phone"],
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+      order: [["createdAt", "DESC"]], // Orden de órdenes
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener órdenes:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+const getOrdersCompletedAdmin = async (req, res) => {
+  try {
+    const orders = await Order.findAll({
+      where: {
+        status: "pagado", // no necesitas el OR si solo es un valor
+      },
+      include: [
+        {
+          model: OrderPayment,
+          as: "payments",
+          attributes: [
+            "id",
+            "amount",
+            "paymentMethod",
+            "status",
+            "reference",
+            "type",
+            "paymentDate",
+          ],
+          separate: true, // 🔥 IMPORTANTE para que el order funcione
+          order: [["paymentDate", "DESC"]], // 🔥 Ahora sí ordena los pagos
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "phone"],
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+      order: [["createdAt", "DESC"]], // Orden de órdenes
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener órdenes:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+const getOrdersShippPayed = async (req, res) => {
+  try {
+    const orders = await Order.findAll({
+      where: {
+        status: "envio_pagado", // no necesitas el OR si solo es un valor
+      },
+      include: [
+        {
+          model: OrderPayment,
+          as: "payments",
+          attributes: [
+            "id",
+            "amount",
+            "paymentMethod",
+            "status",
+            "reference",
+            "type",
+            "paymentDate",
+          ],
+          separate: true, // 🔥 IMPORTANTE para que el order funcione
+          order: [["paymentDate", "DESC"]], // 🔥 Ahora sí ordena los pagos
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "phone"],
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+      order: [["createdAt", "DESC"]], // Orden de órdenes
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener órdenes:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+const getOrdersShipped = async (req, res) => {
+  try {
+    const orders = await Order.findAll({
+      where: {
+        status: "completado", // no necesitas el OR si solo es un valor
+      },
+      include: [
+        {
+          model: OrderPayment,
+          as: "payments",
+          attributes: [
+            "id",
+            "amount",
+            "paymentMethod",
+            "status",
+            "reference",
+            "type",
+            "paymentDate",
+          ],
+          separate: true, // 🔥 IMPORTANTE para que el order funcione
+          order: [["paymentDate", "DESC"]], // 🔥 Ahora sí ordena los pagos
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "phone"],
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+      order: [["createdAt", "DESC"]], // Orden de órdenes
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener órdenes:", error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+const updateShippingInfo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { trackingNumber, carrier, trackingUrl } = req.body;
+
+    // Validaciones básicas
+    if (!trackingNumber || !carrier) {
+      return res.status(400).json({
+        success: false,
+        message: "trackingNumber y carrier son obligatorios.",
+      });
+    }
+
+    // Buscar orden
+    const order = await Order.findByPk(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Orden no encontrada",
+      });
+    }
+
+    // Verificar que el envío ya haya sido pagado
+    if (!order.shippingPaid) {
+      return res.status(400).json({
+        success: false,
+        message: "El envío aún no está pagado. No puedes asignar guía.",
+      });
+    }
+
+    // Actualizamos campos de envío
+    order.trackingNumber = trackingNumber;
+    order.carrier = carrier;
+    switch (carrier) {
+      case "DHL":
+        order.trackingUrl = `https://www.dhl.com/mx-es/home/rastreo.html?tracking-id=${trackingNumber}&submit=1`;
+        break;
+
+      case "Fedex":
+        order.trackingUrl = `https://www.fedex.com/fedextrack?trknbr=${trackingNumber}`;
+        break;
+
+      case "Estafeta":
+        order.trackingUrl = `https://www.estafeta.com/Herramientas/Rastreo?guia=${trackingNumber}`;
+        break;
+
+      default:
+        order.trackingUrl = null; // fallback
+        break;
+    }
+
+    // Estado final
+    order.status = "completado";
+
+    await order.save();
+
+    return res.json({
+      success: true,
+      message: "Información de envío registrada y orden completada.",
+      order,
+    });
+  } catch (error) {
+    console.error("❌ Error al actualizar tracking:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error interno al actualizar la información de envío",
+      error: error.message,
+    });
+  }
+};
+
+const getOrderDetailAdmin = async (req, res) => {
+  try {
+    const { order_id } = req.params;
+
+    const order = await Order.findOne({
+      where: { id: order_id },
+      include: [
+        {
+          model: OrderItem,
+          as: "items",
+          include: [{ model: Product, as: "product" }],
+        },
+        {
+          model: OrderPayment,
+          as: "payments",
+        },
+        {
+          model: Address,
+          as: "address",
+        },
+      ],
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        message: "No se encontró la orden ",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Detalle de la orden obtenido correctamente",
+      order,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener detalle de la orden:", error);
+    return res.status(500).json({
+      message: "Error al obtener detalle de la orden",
+      error: error.message,
+    });
+  }
+};
 
 module.exports = {
   createOrderFromCart,
@@ -328,4 +618,10 @@ module.exports = {
   getOrderDetail,
   getOrdersAdmin,
   assignamentShippingCost,
+  getOrdersActiveAdmin,
+  getOrdersCompletedAdmin,
+  getOrdersShippPayed,
+  getOrdersShipped,
+  updateShippingInfo,
+  getOrderDetailAdmin,
 };
