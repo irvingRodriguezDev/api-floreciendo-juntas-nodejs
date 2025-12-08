@@ -199,6 +199,7 @@ const getOrderDetail = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
     });
@@ -254,6 +255,7 @@ const getOrdersAdmin = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -276,7 +278,7 @@ const assignamentShippingCost = async (req, res) => {
 
     const order = await Order.findByPk(orderId, {
       include: [
-        { model: Address, as: "address" },
+        { model: Address, as: "address", paranoid: false },
         { model: User, as: "user" },
       ],
     });
@@ -351,6 +353,7 @@ const getOrdersActiveAdmin = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
       order: [["createdAt", "DESC"]], // Orden de órdenes
@@ -395,6 +398,7 @@ const getOrdersCompletedAdmin = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
       order: [["createdAt", "DESC"]], // Orden de órdenes
@@ -439,6 +443,7 @@ const getOrdersShippPayed = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
       order: [["createdAt", "DESC"]], // Orden de órdenes
@@ -483,6 +488,7 @@ const getOrdersShipped = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
       order: [["createdAt", "DESC"]], // Orden de órdenes
@@ -589,6 +595,7 @@ const getOrderDetailAdmin = async (req, res) => {
         {
           model: Address,
           as: "address",
+          paranoid: false,
         },
       ],
     });

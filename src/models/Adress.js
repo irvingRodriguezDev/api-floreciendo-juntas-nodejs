@@ -60,7 +60,7 @@ const Address = sequelize.define(
       defaultValue: false,
     },
   },
-  { tableName: "addresses" }
+  { tableName: "addresses", paranoid: true, timestamps: true }
 );
 
 module.exports = Address;
