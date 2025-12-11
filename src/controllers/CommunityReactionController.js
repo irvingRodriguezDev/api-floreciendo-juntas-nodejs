@@ -7,6 +7,7 @@ const {
 const sequelize = require("../config/db");
 const { Op, fn, col } = require("sequelize");
 const socketModule = require("../socket");
+const { addPoints } = require("../utils/addPoints");
 const toggleReaction = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -50,7 +51,13 @@ const toggleReaction = async (req, res) => {
         { transaction: t }
       );
     }
-
+    await addPoints(
+      req.user.id,
+      10,
+      "reaction",
+      CommunityReaction.id,
+      "Reaccionó a un post"
+    );
     await t.commit();
 
     // Obtener todas las reacciones del objetivo para emitir

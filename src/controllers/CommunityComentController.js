@@ -8,6 +8,7 @@ const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const socketModule = require("../socket");
 const getS3Url = require("../helpers/getS3Url");
+const { addPoints } = require("../utils/addPoints");
 const createComment = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -31,6 +32,13 @@ const createComment = async (req, res) => {
     const newComment = await CommunityComment.create(
       { postId, userId, content, attachments },
       { transaction: t }
+    );
+    await addPoints(
+      req.user.id,
+      20,
+      "comment_created",
+      newComment.id,
+      "Comentó un post"
     );
 
     await t.commit(); // ✅ Cerramos transacción correctamente

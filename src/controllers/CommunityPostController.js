@@ -22,7 +22,15 @@ const createPost = async (req, res) => {
     // 1️⃣ Crear post sin attachment
     const post = await CommunityPost.create(
       { courseId, userId, content },
+
       { transaction: t }
+    );
+    await addPoints(
+      req.user.id,
+      25,
+      "post_created",
+      post.id,
+      "Publicó un post"
     );
 
     // 2️⃣ Subir archivo si existe y asociar con post.id

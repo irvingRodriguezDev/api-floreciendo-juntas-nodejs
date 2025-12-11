@@ -1,5 +1,6 @@
 // controllers/progressController.js
 const { CourseProgress } = require("../models");
+const { addPoints } = require("../utils/addPoints");
 
 const getProgress = async (req, res) => {
   try {
@@ -51,7 +52,16 @@ const updateProgress = async (req, res) => {
       if (secondsWatched > userProgress.lastWatchedSeconds) {
         userProgress.lastWatchedSeconds = secondsWatched;
         userProgress.percent = percent.toFixed(2);
-        if (percent >= 100) userProgress.completedAt = new Date();
+        if (percent >= 100) {
+          userProgress.completedAt = new Date();
+          await addPoints(
+            userId,
+            10,
+            "course_completed",
+            courseId,
+            "Completó el curso"
+          );
+        }
         await userProgress.save();
       }
     }

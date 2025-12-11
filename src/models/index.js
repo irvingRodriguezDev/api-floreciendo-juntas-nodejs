@@ -27,6 +27,9 @@ const OrderPayment = require("./OrderPayment");
 const RemindersLog = require("./RemindersLog");
 const OrderItem = require("./OrdenItem");
 const Address = require("./Adress");
+const PointEvent = require("./PointEvent");
+const MonthlyPrize = require("./MonthlyPrize");
+const RaffleWinner = require("./RaffleWinner");
 // Registrar modelos
 const db = {
   sequelize,
@@ -54,6 +57,9 @@ const db = {
   RemindersLog,
   OrderItem,
   Address,
+  PointEvent,
+  MonthlyPrize,
+  RaffleWinner,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -94,6 +100,33 @@ RemindersLog.belongsTo(Order, { foreignKey: "orderId", as: "order" });
 
 User.hasMany(RemindersLog, { foreignKey: "userId", as: "reminders" });
 RemindersLog.belongsTo(User, { foreignKey: "userId", as: "user" });
+User.hasMany(PointEvent, {
+  foreignKey: "user_id",
+  as: "points_history",
+});
+
+PointEvent.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
+User.hasMany(Subscription, {
+  foreignKey: "userId",
+  as: "subscriptions",
+});
+Subscription.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+MonthlyPrize.hasOne(RaffleWinner, {
+  foreignKey: "prize_id",
+  as: "winner",
+});
+
+RaffleWinner.belongsTo(MonthlyPrize, {
+  foreignKey: "prize_id",
+  as: "prize",
+});
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
