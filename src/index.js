@@ -12,13 +12,17 @@ const bodyParser = require("body-parser");
 const webhookController = require("./controllers/WebhookController");
 const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
 const releaseExpiredReservations = require("./jobs/releaseReservations");
+const socketAuth = require("./sockets/socketAuth");
+const liveSocket = require("./sockets/live.socket");
 
 const app = express();
+
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
+
 // ==============================
-// 1️⃣ Stripe Webhook (raw body)
+// 1️⃣ Stripe Webhooks
 // ==============================
 app.post(
   "/webhooks/stripe/subscription",
@@ -39,13 +43,13 @@ app.post(
 );
 
 // ==============================
-// 2️⃣ Parsers normales
+// 2️⃣ Parsers
 // ==============================
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ==============================
-// 3️⃣ CORS configurado para frontend
+// 3️⃣ CORS
 // ==============================
 app.use(
   cors({
@@ -57,15 +61,16 @@ app.use(
 );
 
 // ==============================
-// 4️⃣ Crear servidor HTTP + Socket.IO
+// 4️⃣ HTTP + Socket.IO
 // ==============================
 const httpServer = http.createServer(app);
 const io = init(httpServer);
+
+// 🔐 Auth middleware
+io.use(socketAuth);
+// 👇 registrar sockets por dominio
 io.on("connection", (socket) => {
-  console.log("🔗 Cliente conectado:", socket.id);
-  socket.on("disconnect", () =>
-    console.log("❌ Cliente desconectado:", socket.id)
-  );
+  liveSocket(io, socket);
 });
 
 // ==============================
@@ -73,18 +78,18 @@ io.on("connection", (socket) => {
 // ==============================
 app.use("/api", routes);
 
-// Middleware 404
+// 404
 app.use((req, res) => {
   res.status(404).json({ msg: "Ruta no encontrada" });
 });
 
 // ==============================
-// 6️⃣ Puerto del servidor
+// 6️⃣ Puerto
 // ==============================
 const PORT = process.env.PORT || 3000;
 
 // ==============================
-// 7️⃣ Iniciar DB, seed y cron
+// 7️⃣ DB + seed + cron + server
 // ==============================
 sequelize
   .sync({ alter: false })
@@ -94,12 +99,10 @@ sequelize
     await seedData();
     console.log("✅ Seed completado");
 
-    // Iniciar cron jobs
     expireSubscriptionsJob.start();
     releaseExpiredReservations.start();
     console.log("🕒 Cron jobs iniciados");
 
-    // Levantar servidor HTTP
     httpServer.listen(PORT, "0.0.0.0", () => {
       console.log(`🌐 Servidor corriendo en http://localhost:${PORT}`);
       console.log(`🌐 Exponer con ngrok: ngrok http ${PORT}`);

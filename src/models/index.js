@@ -30,6 +30,8 @@ const Address = require("./Adress");
 const PointEvent = require("./PointEvent");
 const MonthlyPrize = require("./MonthlyPrize");
 const RaffleWinner = require("./RaffleWinner");
+const Live = require("./Live");
+const LiveComment = require("./LiveComment");
 // Registrar modelos
 const db = {
   sequelize,
@@ -60,6 +62,8 @@ const db = {
   PointEvent,
   MonthlyPrize,
   RaffleWinner,
+  Live,
+  LiveComment,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -127,6 +131,7 @@ RaffleWinner.belongsTo(MonthlyPrize, {
   foreignKey: "prize_id",
   as: "prize",
 });
+
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
