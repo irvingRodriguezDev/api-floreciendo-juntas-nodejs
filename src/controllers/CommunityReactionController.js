@@ -10,66 +10,75 @@ const socketModule = require("../socket");
 const { addPoints } = require("../utils/addPoints");
 const toggleReaction = async (req, res) => {
   const t = await sequelize.transaction();
+
   try {
     const userId = req.user.id;
-    const { postId = null, commentId = null, type } = req.body;
+    const { postId, type } = req.body;
 
-    if (!type) return res.status(400).json({ message: "type es requerido" });
-    if (!postId && !commentId)
-      return res.status(400).json({ message: "postId o commentId requerido" });
-    if (postId && commentId)
-      return res
-        .status(400)
-        .json({ message: "Solo postId o commentId, no ambos" });
-
-    // Verificar existencia del objetivo
-    if (postId) {
-      const post = await CommunityPost.findByPk(postId);
-      if (!post) return res.status(404).json({ message: "Post no encontrado" });
-    } else {
-      const comment = await CommunityComment.findByPk(commentId);
-      if (!comment)
-        return res.status(404).json({ message: "Comentario no encontrado" });
+    // -------- VALIDACIONES --------
+    if (!postId) {
+      await t.rollback();
+      return res.status(400).json({ message: "postId es requerido" });
     }
 
-    // Buscar si el usuario ya tiene una reacción
+    if (!type) {
+      await t.rollback();
+      return res.status(400).json({ message: "type es requerido" });
+    }
+
+    const post = await CommunityPost.findByPk(postId);
+    if (!post) {
+      await t.rollback();
+      return res.status(404).json({ message: "Post no encontrado" });
+    }
+
+    // -------- REACCIÓN --------
     const existingReaction = await CommunityReaction.findOne({
-      where: { userId, postId, commentId },
+      where: { userId, postId },
       transaction: t,
+      lock: t.LOCK.UPDATE,
     });
 
     if (existingReaction) {
-      // Si ya existe, actualizar el tipo
+      // Solo cambia el tipo si es distinto
       if (existingReaction.type !== type) {
         existingReaction.type = type;
         await existingReaction.save({ transaction: t });
       }
     } else {
-      // Si no existe, crear nueva reacción
+      // Crear reacción
       await CommunityReaction.create(
-        { userId, type, postId, commentId },
+        { userId, postId, type },
         { transaction: t }
       );
     }
+
+    // -------- PUNTOS (IDEMPOTENTE) --------
     await addPoints(
-      req.user.id,
+      userId,
       10,
       "reaction",
-      CommunityReaction.id,
-      "Reaccionó a un post"
+      `post:${postId}`, // 🔒 CLAVE
+      "Reaccionó a un post",
+      t
     );
+
     await t.commit();
 
-    // Obtener todas las reacciones del objetivo para emitir
+    // -------- FUERA DE TRANSACCIÓN --------
     const reactions = await CommunityReaction.findAll({
-      where: { postId, commentId },
+      where: { postId },
       include: [
-        { model: User, as: "user", attributes: ["id", "name", "profileImage"] },
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "name", "profileImage"],
+        },
       ],
     });
 
     const io = socketModule.getIO();
-    io.emit("reactionUpdated", { postId, commentId, reactions });
+    io.emit("reactionUpdated", { postId, reactions });
 
     return res.json({
       message: "Reacción actualizada correctamente",
@@ -77,7 +86,8 @@ const toggleReaction = async (req, res) => {
     });
   } catch (err) {
     if (!t.finished) await t.rollback();
-    console.error(err);
+
+    console.error("❌ Error en toggleReaction:", err);
     return res.status(500).json({
       message: "Error al togglear reacción",
       error: err.message,

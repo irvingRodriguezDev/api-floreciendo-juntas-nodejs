@@ -8,7 +8,9 @@ const {
   OrderPayment,
   OrderItem,
   Product,
+  StripeEvent,
 } = require("../models");
+const moment = require("moment-timezone");
 const sendTicketEmail = require("../helpers/sendTicketMail");
 const sequelize = require("../config/db");
 // NOTA: Asegúrate de que estas variables de entorno estén cargadas
@@ -40,117 +42,160 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       subscriptionEndpointSecret
     );
   } catch (err) {
-    console.error("❌ Error verificando webhook:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   const data = event.data.object;
 
+  /* ================================================= */
+  /* 🛡️ FILTRO DE FLUJO (PROTECCIÓN)                   */
+  /* ================================================= */
+  if (data.metadata?.flow !== "SUBSCRIPTION") {
+    return res
+      .status(200)
+      .json({ received: true, ignored: "No es flujo suscripción" });
+  }
+
+  /* ================================================= */
+  /* Idempotencia                                      */
+  /* ================================================= */
+  const alreadyProcessed = await StripeEvent.findOne({
+    where: { event_id: event.id },
+  });
+  if (alreadyProcessed) return res.status(200).json({ received: true });
+
   try {
     switch (event.type) {
-      /* ================================================= */
-      /* 1) CHECKOUT SESSION COMPLETED                     */
-      /* ================================================= */
       case "checkout.session.completed": {
-        const session = data;
+        if (
+          data.mode !== "subscription" &&
+          data.metadata.subscriptionType !== "ONETIME"
+        )
+          break;
 
-        if (!session.metadata || !session.metadata.userId) {
-          return res.status(200).json({ received: true });
-        }
+        const { userId, priceId, subscriptionType } = data.metadata;
+        const now = new Date();
 
-        const { userId, priceId, subscriptionType } = session.metadata;
-
-        const subscriptionId =
-          session.mode === "subscription" ? session.subscription : null;
-
-        // 👉 Crear registro en la BD (Stripe recomienda hacerlo aquí)
         await Subscription.create({
-          stripe_checkout_session_id: session.id,
-          stripe_subscription_id: subscriptionId,
-          stripe_customer_id: session.customer,
+          stripe_checkout_session_id: data.id,
+          stripe_subscription_id: data.subscription || null,
+          stripe_customer_id: data.customer,
           subscription_type: subscriptionType,
           price_id: priceId,
           userId,
           status: "active",
           start_date: now,
-          end_date: subscriptionType === "ONETIME" ? getExpirationDate() : null,
           next_renewal:
             subscriptionType === "RECURRING"
-              ? new Date(now.setDate(now.getDate() + 30))
+              ? moment().tz(timezone).add(30, "days").toDate()
               : null,
         });
 
-        // 👉 Actualizar usuario
-        const user = await User.findByPk(userId);
-        if (user) {
-          await user.update({
-            isSubscribed: true,
-            stripeSubscriptionId: subscriptionId,
-          });
-        }
+        await User.update({ isSubscribed: true }, { where: { id: userId } });
+        break;
+      }
+
+      case "invoice.payment_succeeded": {
+        if (!data.subscription) break;
+
+        const timezone = "America/Mexico_City";
+
+        await Subscription.update(
+          {
+            status: "active",
+
+            // 👉 Momento exacto en que Stripe marcó como pagada la factura
+            last_payment_at: data.status_transitions?.paid_at
+              ? moment
+                  .unix(data.status_transitions.paid_at)
+                  .tz(timezone)
+                  .toDate()
+              : moment().tz(timezone).toDate(),
+
+            // 👉 Próximo ciclo de facturación (Stripe manda el periodo exacto)
+            next_renewal: data.lines?.data?.[0]?.period?.end
+              ? moment.unix(data.lines.data[0].period.end).tz(timezone).toDate()
+              : null,
+          },
+          {
+            where: {
+              stripe_subscription_id: data.subscription,
+            },
+          }
+        );
 
         break;
       }
 
-      /* ================================================= */
-      /* 2) SUBSCRIPTION DELETED                           */
-      /* ================================================= */
+      /* =============================================== */
+      /* PAYMENT FAILED                                  */
+      /* =============================================== */
+      case "invoice.payment_failed": {
+        const invoice = data;
+        if (!invoice.subscription) break;
+
+        await Subscription.update(
+          { status: "past_due" },
+          { where: { stripe_subscription_id: invoice.subscription } }
+        );
+
+        break;
+      }
+
+      /* =============================================== */
+      /* SUBSCRIPTION DELETED                            */
+      /* =============================================== */
       case "customer.subscription.deleted": {
-        const subscription = data;
+        await Subscription.update(
+          { status: "canceled", end_date: new Date() },
+          { where: { stripe_subscription_id: data.id } }
+        );
 
-        const subscriptionRecord = await Subscription.findOne({
-          where: { stripe_subscription_id: subscription.id },
-        });
-
-        if (subscriptionRecord) {
-          await subscriptionRecord.update({
-            status: "canceled",
-            end_date: new Date(),
-          });
-        }
-
-        const user = await User.findOne({
-          where: { stripeSubscriptionId: subscription.id },
-        });
-
-        if (user) {
-          await user.update({ isSubscribed: false });
-        }
+        await User.update(
+          { isSubscribed: false },
+          { where: { stripeSubscriptionId: data.id } }
+        );
 
         break;
       }
 
-      /* ================================================= */
-      /* 3) SUBSCRIPTION UPDATED (Renewal, changes, etc)    */
-      /* ================================================= */
+      /* =============================================== */
+      /* SUBSCRIPTION UPDATED                            */
+      /* =============================================== */
       case "customer.subscription.updated": {
-        const subscription = data;
+        const timezone = "America/Mexico_City";
 
-        const subscriptionRecord = await Subscription.findOne({
-          where: { stripe_subscription_id: subscription.id },
-        });
+        await Subscription.update(
+          {
+            status: data.status,
 
-        if (subscriptionRecord) {
-          await subscriptionRecord.update({
-            status: subscription.status,
-            next_renewal: subscription.current_period_end
-              ? new Date(subscription.current_period_end * 1000)
+            // 👉 Stripe es la fuente de verdad del periodo activo
+            next_renewal: data.current_period_end
+              ? moment.unix(data.current_period_end).tz(timezone).toDate()
               : null,
-          });
-        }
+          },
+          {
+            where: {
+              stripe_subscription_id: data.id,
+            },
+          }
+        );
 
         break;
       }
 
-      /* ================================================= */
       default:
-        console.log("Evento ignorado:", event.type);
+        console.log("ℹ️ Evento ignorado:", event.type);
     }
 
+    /* ================================================= */
+    /* 4️⃣ Registrar evento (SOLO si TODO salió bien)   */
+    /* ================================================= */
+    await StripeEvent.create({ event_id: event.id, type: event.type });
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error("❌ Error procesando webhook:", error);
-    return res.status(500).json({ error: "Internal Server Error" });
+    console.error("❌ Error procesando suscripción:", error);
+    return res.status(500).send("Internal Error");
   }
 };
 

@@ -11,62 +11,94 @@ const getS3Url = require("../helpers/getS3Url");
 const { addPoints } = require("../utils/addPoints");
 const createComment = async (req, res) => {
   const t = await sequelize.transaction();
+
   try {
-    const { userId } = req.query;
+    const userId = req.user.id; // 🔐 seguro
     const { postId, content } = req.body;
 
-    if (!postId) return res.status(400).json({ message: "postId requerido" });
-    if (!content || !content.trim())
-      return res.status(400).json({ message: "content requerido" });
-
-    // Verificar existencia del post
-    const post = await CommunityPost.findByPk(postId);
-    if (!post) return res.status(404).json({ message: "Post no encontrado" });
-
-    let attachments = null;
-    if (req.files && req.files.length) {
-      attachments = await uploadToS3(req.files);
+    if (!postId) {
+      await t.rollback();
+      return res.status(400).json({ message: "postId requerido" });
     }
 
-    // Crear comentario dentro de la transacción
+    if (!content || !content.trim()) {
+      await t.rollback();
+      return res.status(400).json({ message: "content requerido" });
+    }
+
+    // Verificar post (fuera de transacción)
+    const post = await CommunityPost.findByPk(postId);
+    if (!post) {
+      await t.rollback();
+      return res.status(404).json({ message: "Post no encontrado" });
+    }
+
+    // 1️⃣ Crear comentario (SIN attachments todavía)
     const newComment = await CommunityComment.create(
-      { postId, userId, content, attachments },
+      {
+        postId,
+        userId,
+        content,
+        attachments: null,
+      },
       { transaction: t }
     );
+
+    // 2️⃣ Sumar puntos (MISMA transacción 🔥)
     await addPoints(
-      req.user.id,
+      userId,
       20,
       "comment_created",
       newComment.id,
-      "Comentó un post"
+      "Comentó un post",
+      t
     );
 
-    await t.commit(); // ✅ Cerramos transacción correctamente
+    // 3️⃣ Commit
+    await t.commit();
 
-    // 🚨 Todo lo que sigue ya es fuera de la transacción
+    // ---------- FUERA DE LA TRANSACCIÓN ----------
+
+    // 4️⃣ Subir archivos a S3
+    if (req.files && req.files.length) {
+      const attachments = await uploadToS3(
+        "comments",
+        req.files,
+        newComment.id
+      );
+      newComment.attachments = attachments;
+      await newComment.save(); // fuera de t
+    }
+
+    // 5️⃣ Recargar con usuario
     await newComment.reload({
       include: [
-        { model: User, as: "user", attributes: ["id", "name", "profileImage"] },
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "name", "profileImage"],
+        },
       ],
     });
 
-    // Si el usuario tiene imagen, formatear la URL desde S3
+    // 6️⃣ Normalizar URLs
     if (newComment.user?.profileImage) {
       newComment.user.profileImage = getS3Url(newComment.user.profileImage);
     }
 
-    // Si hay attachments, formatear también
     if (newComment.attachments) {
       newComment.attachments = getS3Url(newComment.attachments);
     }
 
-    // Emitir el evento de socket
+    // 7️⃣ Emitir socket
     const io = socketModule.getIO();
-    io.emit("commentCreated", { postId, comment: newComment });
+    io.emit("commentCreated", {
+      postId,
+      comment: newComment,
+    });
 
     return res.status(201).json(newComment);
   } catch (err) {
-    // Solo intentar rollback si la transacción sigue activa
     if (!t.finished) await t.rollback();
 
     console.error("❌ Error al crear comentario:", err);

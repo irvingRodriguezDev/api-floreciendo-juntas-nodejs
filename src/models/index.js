@@ -32,6 +32,7 @@ const MonthlyPrize = require("./MonthlyPrize");
 const RaffleWinner = require("./RaffleWinner");
 const Live = require("./Live");
 const LiveComment = require("./LiveComment");
+const StripeEvent = require("./StripeEvents");
 // Registrar modelos
 const db = {
   sequelize,
@@ -64,6 +65,7 @@ const db = {
   RaffleWinner,
   Live,
   LiveComment,
+  StripeEvent,
 };
 
 // 🔹 Relaciones entre Role y User

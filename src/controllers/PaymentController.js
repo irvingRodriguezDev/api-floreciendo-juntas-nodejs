@@ -69,8 +69,6 @@ const createPayment = async (req, res) => {
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
-    console.log("Checkout Session creada:", session.id);
-
     // 5. Guardar registro temporal en DB
     await Subscription.create({
       stripe_checkout_session_id: session.id,
@@ -91,11 +89,6 @@ const createPayment = async (req, res) => {
 const crearSesionPagoUnico = async (req, res) => {
   try {
     const { userId, priceId } = req.body;
-
-    if (!userId || !priceId) {
-      return res.status(400).json({ message: "Faltan parámetros" });
-    }
-
     const customerId = await getOrCreateStripeCustomer(userId);
 
     const session = await stripe.checkout.sessions.create({
@@ -103,28 +96,19 @@ const crearSesionPagoUnico = async (req, res) => {
       mode: "payment",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      allow_promotion_codes: false,
-      invoice_creation: { enabled: false },
-
       metadata: {
         userId: userId.toString(),
-        priceId,
+        priceId: priceId.toString(),
         subscriptionType: "ONETIME",
-        type: "ONETIME",
+        flow: "SUBSCRIPTION", // <--- Filtro Maestro
       },
-
-      client_reference_id: userId.toString(),
-
       success_url: `${process.env.CLIENT_URL}/success-payment-subscription?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
     return res.status(200).json(session);
   } catch (error) {
-    console.error("❌ Error en crearSesionPagoUnico:", error);
-    return res.status(500).json({
-      error: "Error creando la sesión de pago único",
-    });
+    return res.status(500).json({ error: error.message });
   }
 };
 
@@ -132,49 +116,34 @@ const crearSesionPagoUnico = async (req, res) => {
 const crearSesionSuscripcionMensual = async (req, res) => {
   try {
     const { userId, priceId } = req.body;
-
-    if (!userId || !priceId) {
-      return res.status(400).json({ message: "Faltan parámetros" });
-    }
-
     const customerId = await getOrCreateStripeCustomer(userId);
-
-    const subscriptionType = "RECURRING";
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-
       subscription_data: {
-        payment_behavior: "allow_incomplete",
         metadata: {
-          userId,
-          priceId,
-          subscriptionType,
+          userId: userId.toString(),
+          priceId: priceId.toString(),
+          subscriptionType: "RECURRING",
+          flow: "SUBSCRIPTION", // <--- Importante para renovaciones
         },
       },
-
       metadata: {
-        userId,
-        priceId,
-        subscriptionType,
-        type: "RECURRING",
+        userId: userId.toString(),
+        priceId: priceId.toString(),
+        subscriptionType: "RECURRING",
+        flow: "SUBSCRIPTION",
       },
-
-      client_reference_id: userId.toString(),
-
       success_url: `${process.env.CLIENT_URL}/success-payment-subscription?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
     return res.status(200).json(session);
   } catch (error) {
-    console.error("❌ Error en crearSesionSuscripcionMensual:", error);
-    return res.status(500).json({
-      error: "Error creando la sesión de suscripción mensual",
-    });
+    return res.status(500).json({ error: error.message });
   }
 };
 

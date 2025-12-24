@@ -8,42 +8,53 @@ const sequelize = require("../config/db");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const socketModule = require("../socket");
+const { addPoints } = require("../utils/addPoints");
+
 const createPost = async (req, res) => {
   const t = await sequelize.transaction();
+
   try {
     const userId = req.user.id;
     const { courseId, content } = req.body;
 
-    if (!courseId)
+    if (!courseId) {
+      await t.rollback();
       return res.status(400).json({ message: "courseId es requerido" });
-    if (!content || !content.trim())
+    }
+
+    if (!content || !content.trim()) {
+      await t.rollback();
       return res.status(400).json({ message: "content es requerido" });
+    }
 
-    // 1️⃣ Crear post sin attachment
+    // 1️⃣ Crear post
     const post = await CommunityPost.create(
-      { courseId, userId, content },
-
+      {
+        courseId,
+        userId,
+        content,
+      },
       { transaction: t }
     );
-    await addPoints(
-      req.user.id,
-      25,
-      "post_created",
-      post.id,
-      "Publicó un post"
-    );
 
-    // 2️⃣ Subir archivo si existe y asociar con post.id
+    // 2️⃣ Asignar puntos (MISMA TRANSACCIÓN 🔥)
+    await addPoints(userId, 25, "post_created", post.id, "Publicó un post", t);
+
+    // 3️⃣ Subir attachment si existe
     if (req.file) {
       const attachmentUrl = await uploadToS3("posts", req.file, post.id);
       post.attachments = attachmentUrl.replace(/^"|"$/g, "");
       await post.save({ transaction: t });
     }
 
+    // 4️⃣ Commit
     await t.commit();
+
+    // 5️⃣ Emitir socket (FUERA de la transacción)
     const io = socketModule.getIO();
     io.emit("postCreated", post);
-    // Consultar de nuevo para incluir autor
+
+    // 6️⃣ Consultar post con autor
     const postWithAuthor = await CommunityPost.findByPk(post.id, {
       include: [
         {
@@ -54,29 +65,31 @@ const createPost = async (req, res) => {
       ],
     });
 
-    // Convertir URLs de S3
-    if (postWithAuthor) {
-      if (postWithAuthor.author?.profileImage) {
-        postWithAuthor.author.profileImage = getS3Url(
-          postWithAuthor.author.profileImage
-        );
-      }
-
-      if (postWithAuthor.attachments) {
-        const cleanPath = postWithAuthor.attachments
-          .replace(/\\"/g, "")
-          .replace(/^"|"$/g, "")
-          .replace(/^\//, "");
-        postWithAuthor.attachments = getS3Url(cleanPath);
-      }
+    // 7️⃣ Normalizar URLs S3
+    if (postWithAuthor?.author?.profileImage) {
+      postWithAuthor.author.profileImage = getS3Url(
+        postWithAuthor.author.profileImage
+      );
     }
+
+    if (postWithAuthor?.attachments) {
+      const cleanPath = postWithAuthor.attachments
+        .replace(/\\"/g, "")
+        .replace(/^"|"$/g, "")
+        .replace(/^\//, "");
+
+      postWithAuthor.attachments = getS3Url(cleanPath);
+    }
+
     return res.status(201).json(postWithAuthor);
   } catch (err) {
     await t.rollback();
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error al crear post", error: err.message });
+    console.error("createPost error:", err);
+
+    return res.status(500).json({
+      message: "Error al crear post",
+      error: err.message,
+    });
   }
 };
 

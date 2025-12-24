@@ -1,40 +1,53 @@
-import PointEvent from "../models/PointEvent.js";
-import User from "../models/User.js";
+// src/utils/addPoints.js
+const { PointEvent, User, sequelize } = require("../models");
 
-export const addPoints = async (
+const addPoints = async (
   userId,
   points,
   actionType,
   referenceId = null,
-  description = null
+  description = null,
+  transaction = null
 ) => {
-  // 1. Opcional: evitar duplicados cuando reference_id es único
-  if (referenceId) {
+  // Evitar duplicados SOLO si hay referencia
+  if (referenceId !== null) {
     const exists = await PointEvent.findOne({
       where: {
         user_id: userId,
         action_type: actionType,
         reference_id: referenceId,
       },
+      transaction,
+      lock: transaction ? transaction.LOCK.UPDATE : undefined,
     });
 
-    if (exists) return; // ya otorgaste estos puntos
+    if (exists) return false;
   }
 
-  // 2. Crear evento
-  await PointEvent.create({
-    user_id: userId,
-    points,
-    action_type: actionType,
-    reference_id: referenceId,
-    description,
-  });
+  // Crear evento
+  await PointEvent.create(
+    {
+      user_id: userId,
+      points,
+      action_type: actionType,
+      reference_id: referenceId,
+      description,
+    },
+    { transaction }
+  );
 
-  // 3. Actualizar total en users
-  await User.increment("total_points", {
-    by: points,
-    where: { id: userId },
-  });
+  // 🔥 SUMA GARANTIZADA
+  await User.update(
+    {
+      total_points: sequelize.literal(`total_points + ${points}`),
+    },
+    {
+      where: { id: userId },
+      transaction,
+    }
+  );
 
   return true;
 };
+
+module.exports = { addPoints };
