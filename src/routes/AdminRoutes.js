@@ -5,6 +5,11 @@ const usrCtrl = require("../controllers/admin/UserController");
 const prizeCtrl = require("../controllers/admin/MontlhyPrizeController");
 router.get("/users", authMiddleware, usrCtrl.getAllUsers);
 router.get("/user-eligible", authMiddleware, usrCtrl.eligibleUsers);
+router.get(
+  "/user-winners-current-month",
+  authMiddleware,
+  usrCtrl.obtainWinnersOfMonth
+);
 router.get("/run-raffle", authMiddleware, usrCtrl.runRaffleOneWinner);
 router.post("/create-prize", authMiddleware, prizeCtrl.createPrize);
 router.get("/montlhy-prizes", authMiddleware, prizeCtrl.getMonthlyPrizes);

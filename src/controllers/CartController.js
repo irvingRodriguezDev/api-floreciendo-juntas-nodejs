@@ -299,7 +299,6 @@ const updateCartItem = async (req, res) => {
       },
       include: [{ model: Product, as: "product" }],
     });
-    console.log(item, "el item");
 
     if (!item) {
       return res

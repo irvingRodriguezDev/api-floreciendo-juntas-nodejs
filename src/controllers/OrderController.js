@@ -17,7 +17,7 @@ const createOrderFromCart = async (req, res) => {
 
   try {
     const userId = req.user.id;
-    const { AddressId } = req.body;
+    const { deliveryAddressId } = req.body;
 
     // 1️⃣ Verificar si ya existe una orden activa para el usuario
     const activeOrder = await Order.findOne({
@@ -86,7 +86,7 @@ const createOrderFromCart = async (req, res) => {
     const order = await Order.create(
       {
         userId,
-        deliveryAddressId: AddressId,
+        deliveryAddressId: deliveryAddressId,
         cartId: cart.id,
         totalAmount,
         paidAmount: 0,

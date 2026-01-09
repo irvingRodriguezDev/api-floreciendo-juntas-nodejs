@@ -6,10 +6,12 @@ const {
   PointEvent,
   MonthlyPrize,
   RaffleWinner,
+  Address,
 } = require("../../models");
 const { getEligibleUsers } = require("../../helpers/raffle");
 const { Op } = require("sequelize");
 const sequelize = require("../../config/db");
+const { response } = require("express");
 const getAllUsers = async (req, res) => {
   try {
     const allUsers = await User.findAll();
@@ -143,8 +145,44 @@ const runRaffleOneWinner = async (req, res) => {
   }
 };
 
+const obtainWinnersOfMonth = async (req, res) => {
+  try {
+    const { month } = req.query;
+    const winners = await RaffleWinner.findAll({
+      where: {
+        raffle_month: month,
+      },
+      include: [
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "name", "email", "phone"],
+        },
+        {
+          model: MonthlyPrize,
+          as: "prize",
+          attributes: ["id", "prize_name"],
+        },
+      ],
+      order: [["position", "ASC"]],
+    });
+
+    return res.status(200).json({
+      month: month,
+      totalWinners: winners.length,
+      winners,
+    });
+  } catch (error) {
+    console.error("obtainWinnersOfMonth error:", error);
+    return res.status(500).json({
+      message: "Error al obtener los ganadores del mes",
+    });
+  }
+};
+
 module.exports = {
   getAllUsers,
   runRaffleOneWinner,
   eligibleUsers,
+  obtainWinnersOfMonth,
 };

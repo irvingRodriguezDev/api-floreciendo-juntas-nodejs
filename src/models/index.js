@@ -33,6 +33,10 @@ const RaffleWinner = require("./RaffleWinner");
 const Live = require("./Live");
 const LiveComment = require("./LiveComment");
 const StripeEvent = require("./StripeEvents");
+const Post = require("./Post");
+const PostMedia = require("./PostMedia");
+const PostComment = require("./PostComment");
+const PostLike = require("./PostLike");
 // Registrar modelos
 const db = {
   sequelize,
@@ -66,6 +70,10 @@ const db = {
   Live,
   LiveComment,
   StripeEvent,
+  Post,
+  PostComment,
+  PostLike,
+  PostMedia,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -128,12 +136,97 @@ MonthlyPrize.hasOne(RaffleWinner, {
   foreignKey: "prize_id",
   as: "winner",
 });
+RaffleWinner.belongsTo(User, {
+  foreignKey: "user_id",
+  as: "user",
+});
 
 RaffleWinner.belongsTo(MonthlyPrize, {
   foreignKey: "prize_id",
   as: "prize",
 });
+// ==========================
+// Post ↔ User
+// ==========================
+Post.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
 
+User.hasMany(Post, {
+  foreignKey: "userId",
+  as: "posts",
+});
+
+// ==========================
+// Post ↔ Comments
+// ==========================
+Post.hasMany(PostComment, {
+  foreignKey: "postId",
+  as: "comments",
+});
+
+PostComment.belongsTo(Post, {
+  foreignKey: "postId",
+  as: "post",
+});
+
+PostComment.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+User.hasMany(PostComment, {
+  foreignKey: "userId",
+  as: "comments",
+});
+
+// ==========================
+// Post ↔ Likes
+// ==========================
+Post.hasMany(PostLike, {
+  foreignKey: "postId",
+  as: "likes",
+});
+
+PostLike.belongsTo(Post, {
+  foreignKey: "postId",
+  as: "post",
+});
+
+PostLike.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+User.hasMany(PostLike, {
+  foreignKey: "userId",
+  as: "likes",
+});
+
+// ==========================
+// Media polimórfica
+// ==========================
+
+// 🖼 Media de Posts
+Post.hasMany(PostMedia, {
+  foreignKey: "modelId",
+  constraints: false,
+  scope: {
+    modelType: "post",
+  },
+  as: "media",
+});
+
+// 🖼 Media de Comments
+PostComment.hasMany(PostMedia, {
+  foreignKey: "modelId",
+  constraints: false,
+  scope: {
+    modelType: "comment",
+  },
+  as: "media",
+});
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {

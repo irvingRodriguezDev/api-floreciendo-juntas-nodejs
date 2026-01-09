@@ -128,11 +128,37 @@ const getOneProduct = async (req, res) => {
 
     if (!product)
       return res.status(404).json({ message: "Producto no encontrado" });
+
+    const baseSlug = product.slug.split("-").slice(0, -1).join("-");
+
+    // 🔹 Producto principal
     const formatedProduct = {
       ...product.toJSON(),
-      image: product.image.url ? getS3Url(product.image.url) : null,
+      image: product.image?.url ? getS3Url(product.image.url) : null,
     };
-    res.json(formatedProduct);
+
+    // 🔹 Productos relacionados
+    const relatedProducts = await Product.findAll({
+      where: {
+        id: { [Op.ne]: product.id },
+        slug: {
+          [Op.like]: `${baseSlug}%`,
+        },
+        active: true,
+      },
+      limit: 6,
+      include: [{ model: ProductImage, as: "image" }],
+    });
+
+    const formattedRelated = relatedProducts.map((p) => ({
+      ...p.toJSON(),
+      image: p.image?.url ? getS3Url(p.image.url) : null,
+    }));
+
+    res.json({
+      product: formatedProduct,
+      related: formattedRelated,
+    });
   } catch (error) {
     console.error("Error al obtener producto:", error);
     res.status(500).json({ message: "Error al obtener producto" });
