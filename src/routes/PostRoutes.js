@@ -16,5 +16,6 @@ router.post(
   upload.array("files", 4),
   postController.addComment
 );
+router.post("/:id/reaction", authMiddleware, postController.toggleLike);
 
 module.exports = router;

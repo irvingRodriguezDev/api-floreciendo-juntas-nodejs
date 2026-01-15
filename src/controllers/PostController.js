@@ -1,9 +1,10 @@
 // controllers/post.controller.js
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-const path = require("path");
 const { Post, PostComment, PostMedia, PostLike, User } = require("../models");
 const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
+const socketModule = require("../socket");
+
 const createPost = async (req, res) => {
   const t = await sequelize.transaction();
 
@@ -80,6 +81,9 @@ const createPost = async (req, res) => {
         url: getS3Url(m.url),
       })),
     };
+    //websockets
+    const io = socketModule.getIO();
+    io.emit("postCommunityCreated", responsePost);
 
     res.json({
       success: true,
@@ -118,7 +122,7 @@ const getFeed = async (req, res) => {
         {
           model: PostComment,
           as: "comments",
-          attributes: ["id", "content"],
+          attributes: ["id", "content", "createdAt"],
           include: [
             {
               model: PostMedia,
@@ -147,7 +151,7 @@ const getFeed = async (req, res) => {
       return {
         ...postJson,
 
-        // 👤 Usuario con imagen resuelta (MISMO alias)
+        // 👤 Usuario del post
         user: {
           ...postJson.user,
           profileImage: postJson.user?.profileImage
@@ -161,7 +165,26 @@ const getFeed = async (req, res) => {
           url: getS3Url(m.url),
         })),
 
-        // 📊 Contadores correctos
+        // 💬 Comentarios normalizados
+        comments: (postJson.comments || []).map((comment) => ({
+          ...comment,
+
+          // 👤 Usuario del comentario
+          user: {
+            ...comment.user,
+            profileImage: comment.user?.profileImage
+              ? getS3Url(comment.user.profileImage)
+              : null,
+          },
+
+          // 🖼 Media del comentario
+          media: (comment.media || []).map((m) => ({
+            ...m,
+            url: getS3Url(m.url),
+          })),
+        })),
+
+        // 📊 Contadores
         commentsCount: postJson.comments?.length || 0,
         likesCount: postJson.likes?.length || 0,
       };
@@ -184,20 +207,38 @@ const getFeed = async (req, res) => {
 };
 
 const toggleLike = async (req, res) => {
-  const { id } = req.params;
-  const userId = req.user.id;
+  try {
+    const { id: postId } = req.params;
+    const userId = req.user.id;
 
-  const existing = await PostLike.findOne({
-    where: { postId: id, userId },
-  });
+    const existing = await PostLike.findOne({
+      where: { postId, userId },
+    });
 
-  if (existing) {
-    await existing.destroy();
-    return res.json({ liked: false });
+    let liked;
+
+    if (existing) {
+      await existing.destroy();
+      liked = false;
+    } else {
+      await PostLike.create({ postId, userId });
+      liked = true;
+    }
+
+    // 🔌 Emitir evento socket
+    const io = require("../socket").getIO();
+
+    io.emit("postLikeToggled", {
+      postId,
+      userId,
+      liked,
+    });
+
+    res.json({ success: true, liked });
+  } catch (error) {
+    console.error("❌ toggleLike error:", error);
+    res.status(500).json({ message: error.message });
   }
-
-  await PostLike.create({ postId: id, userId });
-  res.json({ liked: true });
 };
 
 const addComment = async (req, res) => {
@@ -261,7 +302,7 @@ const addComment = async (req, res) => {
     // 5️⃣ Resolver URLs
     const response = {
       ...fullComment.toJSON(),
-      User: {
+      user: {
         ...fullComment.user.toJSON(),
         profileImage: fullComment.user.profileImage
           ? getS3Url(fullComment.user.profileImage)
@@ -272,7 +313,13 @@ const addComment = async (req, res) => {
         url: getS3Url(m.url),
       })),
     };
-
+    //websockets
+    const io = socketModule.getIO();
+    io.emit("createCommentPostCommunity", {
+      postId,
+      comment,
+      userId: req.user.id,
+    });
     res.json({
       success: true,
       data: response,

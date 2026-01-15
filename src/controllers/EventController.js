@@ -157,7 +157,7 @@ const getEvents = async (req, res) => {
 
       const formatted = events.map((event) => ({
         ...event.toJSON(),
-        image: event.image ?? null,
+        image: getS3Url(event.image) ?? null,
         availableTickets: parseInt(event.get("availableTickets"), 10),
       }));
 
@@ -187,7 +187,7 @@ const getEvents = async (req, res) => {
 
     const formatted = rows.map((event) => ({
       ...event.toJSON(),
-      image: event.image || null,
+      image: getS3Url(event.image) || null,
       availableTickets: parseInt(event.get("availableTickets"), 10),
     }));
 
@@ -219,7 +219,7 @@ const getLatestEvents = async (req, res) => {
 
     const formatted = events.map((e) => ({
       ...e.toJSON(),
-      image: e.image || null,
+      image: getS3Url(e.image) || null,
     }));
 
     return res.status(200).json({
@@ -257,7 +257,7 @@ const getEventById = async (req, res) => {
     // Formatear respuesta
     const formattedEvent = {
       ...event.toJSON(),
-      image: event.image ? event.image : null,
+      image: event.image ? getS3Url(event.image) : null,
       availableTickets, // ✅ cantidad de tickets disponibles
     };
 

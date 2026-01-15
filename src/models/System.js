@@ -14,7 +14,7 @@ const System = sequelize.define(
       allowNull: false,
     },
     description: {
-      type: DataTypes.STRING(256),
+      type: DataTypes.TEXT,
       allowNull: false,
     },
     icon: {

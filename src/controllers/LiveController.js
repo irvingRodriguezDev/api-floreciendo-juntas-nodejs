@@ -10,6 +10,7 @@ const { Live } = require("../models");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const moment = require("moment-timezone");
+const { getIO } = require("../socket");
 const nowCdmx = () => {
   return moment().tz("America/Mexico_City");
 };
@@ -441,12 +442,26 @@ const handleStreamEnd = async ({ channelArn }) => {
       return;
     }
 
+    // 1️⃣ Actualizar estado del live
     await live.update({
       status: "ended",
-      stream_ended_at: now.toDate(), // CDMX
+      stream_ended_at: now.toDate(),
       current_stream_id: null,
     });
+
+    // 2️⃣ Emitir evento SOCKET 🔥
+    const io = getIO();
+
+    io.to(`live:${live.id}`).emit("live_ended", {
+      liveId: live.id,
+      endedAt: now.toISOString(),
+    });
+
+    console.log(`📡 Socket live_ended emitido → live:${live.id}`);
+
+    // 3️⃣ Cleanup opcional
     await live.destroy();
+
     console.log(`🔴 Live #${live.id} finalizado correctamente`);
   } catch (error) {
     console.error("❌ Error en handleStreamEnd:", error);
