@@ -409,11 +409,21 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       console.warn("⚠️ No hay live scheduled dentro de la ventana");
       return;
     }
-
+    if (live.current_stream_id) {
+      console.warn("⚠️ Stream ya iniciado, ignorando evento duplicado");
+      return;
+    }
     await live.update({
       status: "live",
       stream_started_at: now.toDate(), // CDMX
       current_stream_id: streamId,
+    });
+
+    const io = getIO();
+    io.emit("live_started", {
+      liveId: live.id,
+      status: "live",
+      startedAt: now.toISOString(),
     });
 
     console.log(
@@ -452,7 +462,7 @@ const handleStreamEnd = async ({ channelArn }) => {
     // 2️⃣ Emitir evento SOCKET 🔥
     const io = getIO();
 
-    io.to(`live:${live.id}`).emit("live_ended", {
+    io.emit("live_ended", {
       liveId: live.id,
       endedAt: now.toISOString(),
     });
@@ -460,7 +470,7 @@ const handleStreamEnd = async ({ channelArn }) => {
     console.log(`📡 Socket live_ended emitido → live:${live.id}`);
 
     // 3️⃣ Cleanup opcional
-    await live.destroy();
+    // await live.destroy();
 
     console.log(`🔴 Live #${live.id} finalizado correctamente`);
   } catch (error) {
