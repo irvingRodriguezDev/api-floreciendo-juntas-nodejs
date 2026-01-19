@@ -26,6 +26,10 @@ const CourseVideo = sequelize.define(
       type: DataTypes.BIGINT,
       allowNull: true,
     },
+    upload_id: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     status: {
       type: DataTypes.ENUM("subiendo", "procesando", "listo", "error"),
       allowNull: false,

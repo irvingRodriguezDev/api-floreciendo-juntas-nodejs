@@ -2,6 +2,7 @@ const { CourseVideo } = require("../models");
 const { uploadToS3 } = require("../config/s3");
 
 // Subir video
+const MAX_SIZE_GB = 20;
 const uploadVideo = async (req, res) => {
   try {
     const { courseId } = req.body;

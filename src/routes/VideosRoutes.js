@@ -10,11 +10,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.post("/presigned-url", videoController.generatePresignedUrl);
 router.put("/update/:videoId", videoController.updateVideo);
 
-// Para subir desde backend (solo prueba o casos especiales)
-router.post(
-  "/upload-large",
-  upload.single("file"),
-  videoController.uploadLargeVideo
-);
-
+router.post("/multipart/init", videoController.initMultipartUpload);
+router.post("/multipart/presigned", videoController.getMultipartPresignedUrl);
+router.post("/multipart/complete", videoController.completeMultipartUpload);
 module.exports = router;
