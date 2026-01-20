@@ -3,6 +3,7 @@ const {
   createPayment,
   crearSesionPagoUnico,
   crearSesionSuscripcionMensual,
+  cancelSubscription,
 } = require("../controllers/PaymentController");
 const authMiddleware = require("../middlewares/authMiddleware");
 
@@ -15,5 +16,6 @@ router.post(
   authMiddleware,
   crearSesionSuscripcionMensual
 );
+router.post("/cancel", authMiddleware, cancelSubscription);
 
 module.exports = router;

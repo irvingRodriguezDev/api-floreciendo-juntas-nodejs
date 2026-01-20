@@ -1,3 +1,4 @@
+//controlador que maneja las suscripciones del usuario
 const stripe = require("../config/stripe");
 const { User, Subscription } = require("../models");
 
@@ -111,7 +112,6 @@ const crearSesionPagoUnico = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-
 // Suscripción mensual con cargos recurrentes controlados
 const crearSesionSuscripcionMensual = async (req, res) => {
   try {
@@ -147,8 +147,34 @@ const crearSesionSuscripcionMensual = async (req, res) => {
   }
 };
 
+//funcion para cancelar suscripciones activas
+const cancelSubscription = async (req, res) => {
+  const { userId } = req.body;
+
+  try {
+    const user = await User.findByPk(userId);
+    if (!user || !user.stripeSubscriptionId) {
+      return res.status(400).json({ message: "Usuario no tiene suscripción" });
+    }
+
+    const stripeResponse = await stripe.subscriptions.update(
+      user.stripeSubscriptionId,
+      { cancel_at_period_end: true },
+    );
+
+    return res.status(200).json({
+      message: "Tu suscripción se cancelará al final del periodo actual",
+      stripe: stripeResponse,
+    });
+  } catch (error) {
+    console.error("Error cancelando suscripción:", error);
+    return res.status(500).json({ message: "Error interno" });
+  }
+};
+
 module.exports = {
   createPayment,
   crearSesionPagoUnico,
   crearSesionSuscripcionMensual,
+  cancelSubscription,
 };

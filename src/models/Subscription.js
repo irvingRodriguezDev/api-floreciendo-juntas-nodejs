@@ -45,6 +45,10 @@ const Subscription = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    will_cancel_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     // Estado de la suscripción, refleja los estados de Stripe
     status: {
       type: DataTypes.ENUM(

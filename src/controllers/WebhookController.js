@@ -39,7 +39,7 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      subscriptionEndpointSecret
+      subscriptionEndpointSecret,
     );
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -50,12 +50,13 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
   /* ================================================= */
   /* 🛡️ FILTRO DE FLUJO (PROTECCIÓN)                   */
   /* ================================================= */
-  if (data.metadata?.flow !== "SUBSCRIPTION") {
+  if (event.type.startsWith("invoice.")) {
+    // no aplicamos el filtro de flow
+  } else if (data.metadata?.flow !== "SUBSCRIPTION") {
     return res
       .status(200)
       .json({ received: true, ignored: "No es flujo suscripción" });
   }
-
   /* ================================================= */
   /* Idempotencia                                      */
   /* ================================================= */
@@ -85,46 +86,52 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
           userId,
           status: "active",
           start_date: now,
-          next_renewal:
-            subscriptionType === "RECURRING"
-              ? moment().tz(timezone).add(30, "days").toDate()
-              : null,
+          next_renewal: null,
         });
 
-        await User.update({ isSubscribed: true }, { where: { id: userId } });
+        await User.update(
+          {
+            isSubscribed: true,
+            stripeSubscriptionId: data.subscription || null,
+          },
+          { where: { id: userId } },
+        );
         break;
       }
 
       case "invoice.payment_succeeded": {
-        if (!data.subscription) break;
-
         const timezone = "America/Mexico_City";
+
+        // ID de la suscripción real
+        const subscriptionId =
+          data.subscription ||
+          data.lines?.data?.[0]?.parent?.subscription_item_details
+            ?.subscription;
+
+        if (!subscriptionId) break;
+
+        const line = data.lines?.data?.[0];
+        const nextRenewal = line?.period?.end
+          ? moment.unix(line.period.end).tz(timezone).toDate()
+          : null;
 
         await Subscription.update(
           {
             status: "active",
-
-            // 👉 Momento exacto en que Stripe marcó como pagada la factura
             last_payment_at: data.status_transitions?.paid_at
               ? moment
                   .unix(data.status_transitions.paid_at)
                   .tz(timezone)
                   .toDate()
               : moment().tz(timezone).toDate(),
-
-            // 👉 Próximo ciclo de facturación (Stripe manda el periodo exacto)
-            next_renewal: data.lines?.data?.[0]?.period?.end
-              ? moment.unix(data.lines.data[0].period.end).tz(timezone).toDate()
-              : null,
+            next_renewal: nextRenewal,
           },
           {
             where: {
-              stripe_subscription_id: data.subscription,
+              stripe_subscription_id: subscriptionId,
             },
-          }
+          },
         );
-
-        break;
       }
 
       /* =============================================== */
@@ -136,7 +143,7 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
 
         await Subscription.update(
           { status: "past_due" },
-          { where: { stripe_subscription_id: invoice.subscription } }
+          { where: { stripe_subscription_id: invoice.subscription } },
         );
 
         break;
@@ -146,14 +153,21 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       /* SUBSCRIPTION DELETED                            */
       /* =============================================== */
       case "customer.subscription.deleted": {
+        const sub = data;
+
         await Subscription.update(
-          { status: "canceled", end_date: new Date() },
-          { where: { stripe_subscription_id: data.id } }
+          {
+            status: "canceled",
+            ended_at: sub.ended_at
+              ? moment.unix(sub.ended_at).tz(TIMEZONE).toDate()
+              : new Date(),
+          },
+          { where: { stripe_subscription_id: sub.id } },
         );
 
         await User.update(
           { isSubscribed: false },
-          { where: { stripeSubscriptionId: data.id } }
+          { where: { stripeCustomerId: sub.customer } },
         );
 
         break;
@@ -164,21 +178,27 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       /* =============================================== */
       case "customer.subscription.updated": {
         const timezone = "America/Mexico_City";
+        console.log("emtra esta sio se cancela de manera inmediata");
 
-        await Subscription.update(
-          {
-            status: data.status,
+        // Datos a actualizar en Subscription
+        const updateData = {
+          status: data.status,
+          next_renewal: data.current_period_end
+            ? moment.unix(data.current_period_end).tz(timezone).toDate()
+            : null,
+          will_cancel_at: data.cancel_at
+            ? moment.unix(data.cancel_at).tz(timezone).toDate()
+            : null,
+        };
 
-            // 👉 Stripe es la fuente de verdad del periodo activo
-            next_renewal: data.current_period_end
-              ? moment.unix(data.current_period_end).tz(timezone).toDate()
-              : null,
-          },
-          {
-            where: {
-              stripe_subscription_id: data.id,
-            },
-          }
+        await Subscription.update(updateData, {
+          where: { stripe_subscription_id: data.id },
+        });
+
+        // ⚡ Opcional: mantener referencia en User
+        await User.update(
+          { stripeSubscriptionId: data.id },
+          { where: { stripeSubscriptionId: data.id } },
         );
 
         break;
@@ -283,7 +303,7 @@ const handleOrderPaymentStripeWebhook = async (req, res) => {
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      orderPaymentsEndpointSecret
+      orderPaymentsEndpointSecret,
     );
 
     console.log("💰 Webhook ORDER PAYMENT:", event.type);
@@ -360,12 +380,12 @@ const handleOrderPaymentStripeWebhook = async (req, res) => {
               type: "shipping",
               reference,
             },
-            { transaction: t }
+            { transaction: t },
           );
 
           await order.update(
             { shippingPaid: true, status: "envio_pagado" },
-            { transaction: t }
+            { transaction: t },
           );
 
           await t.commit();
@@ -406,14 +426,14 @@ const handleOrderPaymentStripeWebhook = async (req, res) => {
             type: paymentType,
             reference,
           },
-          { transaction: t }
+          { transaction: t },
         );
 
         // actualizar totales de la orden
         order.paidAmount = Number(order.paidAmount) + amount;
         order.remainingAmount = Math.max(
           0,
-          Number(order.totalAmount) - order.paidAmount
+          Number(order.totalAmount) - order.paidAmount,
         );
         order.status = order.remainingAmount <= 0 ? "pagado" : "activo";
 
@@ -423,7 +443,7 @@ const handleOrderPaymentStripeWebhook = async (req, res) => {
         await t.commit();
 
         console.log(
-          `💵 Pago registrado y stock descontado para orden #${orderId}`
+          `💵 Pago registrado y stock descontado para orden #${orderId}`,
         );
       } catch (err) {
         console.error("💥 Error dentro de la transacción:", err);

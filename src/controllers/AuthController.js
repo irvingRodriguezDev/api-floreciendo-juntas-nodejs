@@ -169,6 +169,7 @@ const me = async (req, res) => {
               startDate: activeSubscription.start_date,
               endDate: activeSubscription.end_date,
               nextRenewal: activeSubscription.next_renewal,
+              will_cancel_at: activeSubscription.will_cancel_at,
             }
           : null,
       },
@@ -216,7 +217,7 @@ const createUserWithRole = async (req, res) => {
         phone,
         profileImage: null,
       },
-      { transaction }
+      { transaction },
     );
 
     // 2️⃣ Subir imagen si se envía
