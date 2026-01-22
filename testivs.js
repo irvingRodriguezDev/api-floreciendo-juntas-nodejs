@@ -20,8 +20,8 @@ const testWebhook = async () => {
   try {
     console.log("🧪 Enviando webhook de prueba...");
     const response = await axios.post(
-      "https://floreciendojuntas.ngrok.io/api/lives/webhooks/ivs",
-      payload
+      "https://api.floreciendojuntas.com/api/lives/webhooks/ivs",
+      payload,
     );
     console.log("✅ Respuesta:", response.data);
   } catch (error) {

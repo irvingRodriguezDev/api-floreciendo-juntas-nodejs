@@ -60,10 +60,7 @@
           "name": "STRIPE_PUBLIC_KEY",
           "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-stripe-public-LJuVYl:STRIPE_PUBLIC_KEY::"
         },
-        {
-          "name": "STRIPE_PRICE_ONETIME",
-          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-stripe-price-onetime-mIW9wk:STRIPE_PRICE_ONETIME::"
-        },
+
         {
           "name": "STRIPE_PRICE_RECURRING",
           "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-stripe-price-recurring-SUkPL7:STRIPE_PRICE_RECURRING::"
@@ -123,7 +120,48 @@
         {
           "name": "LAMBDA_PDF_FUNCTION_NAME",
           "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-lambda-pdf-function-name-AJ6Kzs:LAMBDA_PDF_FUNCTION_NAME::"
+        },
+        {
+          "name": "LAMBDA_STATEMENT_FUNCTION_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-lambda-statement-salon-8n2X76:LAMBDA_STATEMENT_FUNCTION_NAME::"
+        },
+        {
+          "name": "AWS_IVS_REGION",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-region-GMGFos:AWS_IVS_REGION::"
+        },
+                {
+          "name": "AWS_IVS_INGEST_SERVER",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-ingest-server-lnf93c:AWS_IVS_INGEST_SERVER::"
+        },
+                {
+          "name": "AWS_IVS_STREAM_KEY",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-stream-key-jTa8od:AWS_IVS_STREAM_KEY::"
+        },
+                {
+          "name": "AWS_IVS_PLAYBACK_URL",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-playback-url-C45Uk8:AWS_IVS_PLAYBACK_URL::"
+        },
+                {
+          "name": "AWS_IVS_ACCESS_KEY",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-access-key-liAclk:AWS_IVS_ACCESS_KEY::"
+        },
+                {
+          "name": "AWS_IVS_SECRET_KEY",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-secret-key+-Rgw1vc:AWS_IVS_SECRET_KEY::"
+        },
+                {
+          "name": "AWS_IVS_PLAYBACK_KEY_ID",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-playback-key-id-tq6g6K:AWS_IVS_PLAYBACK_KEY_ID::"
+        },
+                        {
+          "name": "AWS_IVS_CHANNEL_ARN",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-ivs-channel-arn-ZUdMyD:AWS_IVS_CHANNEL_ARN::"
+        },
+                        {
+          "name": "AWS_IVS_KEY_ID",
+          "valueFrom":"arn:aws:secretsmanager:us-east-2:693148193622:secret:floreciendo/api-secrets-aws-ivs-key-id-dgWSTT:AWS_IVS_KEY_ID::"
         }
+
       ],
       "environment": [],
       "mountPoints": [],
