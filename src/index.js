@@ -27,19 +27,19 @@ app.get("/health", (req, res) => {
 app.post(
   "/webhooks/stripe/subscription",
   express.raw({ type: "application/json" }),
-  webhookController.handleSubscriptionStripeWebhook
+  webhookController.handleSubscriptionStripeWebhook,
 );
 
 app.post(
   "/webhooks/stripe/ticket",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleTicketStripeWebhook
+  webhookController.handleTicketStripeWebhook,
 );
 
 app.post(
   "/webhooks/stripe/order-payments",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleOrderPaymentStripeWebhook
+  webhookController.handleOrderPaymentStripeWebhook,
 );
 
 // ==============================
@@ -57,7 +57,7 @@ app.use(
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-  })
+  }),
 );
 
 // ==============================
@@ -68,8 +68,13 @@ const io = init(httpServer);
 
 // 🔐 Auth middleware
 io.use(socketAuth);
+
 // 👇 registrar sockets por dominio
 io.on("connection", (socket) => {
+  if (socket.user?.id) {
+    socket.join(`user:${socket.user.id}`);
+  }
+
   liveSocket(io, socket);
 });
 

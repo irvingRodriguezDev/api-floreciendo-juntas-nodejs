@@ -18,6 +18,7 @@ const deleteFromS3 = require("../helpers/deleteFromS3");
 const { Op } = require("sequelize");
 const { addPoints } = require("../utils/addPoints");
 const sendPushNotification = require("../services/sendPushNotification");
+const emitNotification = require("../helpers/emitNotification");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
   "image/jpeg",
@@ -160,7 +161,9 @@ const createPost = async (req, res) => {
     }));
 
     await Notifications.bulkCreate(notifications);
-
+    for (const notification of notifications) {
+      emitNotification(notification.userId, notification);
+    }
     /**
      * 3️⃣ Tokens activos de esos usuarios
      */
@@ -381,7 +384,7 @@ const toggleLike = async (req, res) => {
     if (liked && post.userId !== userId) {
       try {
         // 1️⃣ Guardar en BD
-        await Notifications.create({
+        const notification = await Notifications.create({
           userId: post.userId,
           actorId: userId,
           type: "like",
@@ -390,7 +393,7 @@ const toggleLike = async (req, res) => {
           url: `/comunidad/${postId}`,
           data: { postId },
         });
-
+        emitNotification(post.userId, notification);
         // 2️⃣ Obtener tokens
         const tokens = await NotificationToken.findAll({
           where: {
@@ -546,7 +549,7 @@ const addComment = async (req, res) => {
     if (post.userId !== userId) {
       try {
         // 6️⃣ Guardar en DB
-        await Notifications.create({
+        const notification = await Notifications.create({
           userId: post.userId,
           actorId: userId,
           type: "comment",
@@ -558,7 +561,7 @@ const addComment = async (req, res) => {
             commentId,
           },
         });
-
+        emitNotification(post.userId, notification);
         // 7️⃣ Tokens
         const tokens = await NotificationToken.findAll({
           where: {
