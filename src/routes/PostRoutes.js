@@ -7,15 +7,15 @@ router.post(
   "/",
   authMiddleware,
   upload.array("files", 6),
-  postController.createPost
+  postController.createPost,
 );
 router.get("/", postController.getFeed);
 router.post(
   "/:id/comments",
   authMiddleware,
   upload.array("files", 4),
-  postController.addComment
+  postController.addComment,
 );
 router.post("/:id/reaction", authMiddleware, postController.toggleLike);
-
+router.get("/:postId/show", authMiddleware, postController.ShowOnePostById);
 module.exports = router;

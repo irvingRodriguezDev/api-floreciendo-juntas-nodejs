@@ -24,6 +24,9 @@ const AddressRoutes = require("./AddressRoutes");
 const LivesRoutes = require("./LiveRoutes");
 const PostRoutes = require("./PostRoutes");
 const { testIvsConfig, getToken } = require("../../generateToken");
+const saveNotificationToken = require("../controllers/PushNotificationsFirebase");
+const authMiddleware = require("../middlewares/authMiddleware");
+const NotificationsRoutes = require("./NotificationsRoutes");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -48,4 +51,7 @@ router.use("/lives", LivesRoutes);
 router.use("/posts", PostRoutes);
 router.get("/generate-token-ivs", getToken);
 router.get("/test-config-ivs", testIvsConfig);
+router.post("/save-notification-token", authMiddleware, saveNotificationToken);
+router.use("/notifications", NotificationsRoutes);
+
 module.exports = router;

@@ -1,6 +1,15 @@
 // controllers/post.controller.js
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-const { Post, PostComment, PostMedia, PostLike, User } = require("../models");
+const {
+  Post,
+  PostComment,
+  PostMedia,
+  PostLike,
+  User,
+  Subscription,
+  NotificationToken,
+  Notifications,
+} = require("../models");
 const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
 const socketModule = require("../socket");
@@ -8,6 +17,7 @@ const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const { Op } = require("sequelize");
 const { addPoints } = require("../utils/addPoints");
+const sendPushNotification = require("../services/sendPushNotification");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
   "image/jpeg",
@@ -23,37 +33,36 @@ const ALLOWED_MIME_TYPES = [
 const createPost = async (req, res) => {
   const t = await sequelize.transaction();
   const userId = req.user.id;
+
+  let responsePost = null;
   const uploadedFiles = [];
 
+  const user = await User.findByPk(userId);
   try {
     const { title, content } = req.body;
     const files = req.files || [];
+
+    // Validar archivos
     for (const file of files) {
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-        throw new Error(
-          `Formato no soportado: ${file.originalname} (${file.mimetype})`,
-        );
+        throw new Error(`Formato no soportado: ${file.originalname}`);
       }
     }
+
     // 1️⃣ Crear post
     const post = await Post.create(
-      {
-        userId: req.user.id,
-        title,
-        content,
-      },
+      { userId, title, content },
       { transaction: t },
     );
+
     await addPoints(userId, 30, "post_created", post.id, "Publicó un post", t);
-    // 2️⃣ Procesar media
+
+    // 2️⃣ Media
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isVideo = file.mimetype.startsWith("video");
-
-      // Solo convertir imágenes
       const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
 
-      // Crear registro media
       const media = await PostMedia.create(
         {
           modelId: post.id,
@@ -65,27 +74,18 @@ const createPost = async (req, res) => {
         { transaction: t },
       );
 
-      // Subir a S3
       const finalPath = await uploadToS3("post-media", mediaFile, media.id);
-
-      // Guardar para rollback manual
       uploadedFiles.push(finalPath);
 
-      // Guardar URL definitiva
       await media.update({ url: finalPath }, { transaction: t });
     }
 
-    // 3️⃣ Commit DB
     await t.commit();
 
-    // 4️⃣ Consultar post completo
+    // 3️⃣ Post completo
     const createdPost = await Post.findByPk(post.id, {
       include: [
-        {
-          model: PostMedia,
-          as: "media",
-          order: [["order", "ASC"]],
-        },
+        { model: PostMedia, as: "media", order: [["order", "ASC"]] },
         {
           model: User,
           as: "user",
@@ -94,10 +94,9 @@ const createPost = async (req, res) => {
       ],
     });
 
-    // 5️⃣ Resolver URLs CloudFront
     const postJson = createdPost.toJSON();
 
-    const responsePost = {
+    responsePost = {
       ...postJson,
       user: {
         ...postJson.user,
@@ -111,29 +110,88 @@ const createPost = async (req, res) => {
       })),
     };
 
-    // 6️⃣ WebSocket
-    const io = socketModule.getIO();
-    io.emit("postCommunityCreated", responsePost);
+    // 4️⃣ WebSocket
+    socketModule.getIO().emit("postCommunityCreated", responsePost);
 
-    res.json({
-      success: true,
-      post: responsePost,
-    });
+    res.json({ success: true, post: responsePost });
   } catch (error) {
     await t.rollback();
 
-    // 🧹 Limpieza manual de S3
     for (const fileUrl of uploadedFiles) {
       try {
         const key = fileUrl.replace(`${process.env.CLOUDFRONT_URL}/`, "");
         await deleteFromS3(key);
-      } catch (err) {
-        console.error("❌ Error limpiando S3:", err);
-      }
+      } catch {}
     }
 
-    console.error("❌ createPost error:", error);
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
+  }
+  if (!responsePost?.id) return;
+  try {
+    const usersToNotify = await User.findAll({
+      where: {
+        roleId: 4,
+        isSubscribed: true,
+        id: { [Op.ne]: userId },
+      },
+      attributes: ["id"],
+    });
+
+    if (!usersToNotify.length) return;
+
+    const title = "Nuevo post 🌸";
+    const body = `${user.name} publicó un nuevo post`;
+    const url = `/comunidad/${responsePost.id}`;
+
+    /**
+     * 2️⃣ Guardar notificaciones en DB
+     */
+    const notifications = usersToNotify.map((u) => ({
+      userId: u.id,
+      actorId: userId,
+      type: "post",
+      entityId: responsePost.id,
+      title,
+      body,
+      url,
+      data: {
+        postId: responsePost.id,
+      },
+    }));
+
+    await Notifications.bulkCreate(notifications);
+
+    /**
+     * 3️⃣ Tokens activos de esos usuarios
+     */
+    const tokens = await NotificationToken.findAll({
+      where: {
+        isActive: true,
+        userId: usersToNotify.map((u) => u.id),
+        device: { [Op.ne]: "safari" },
+      },
+      attributes: ["token"],
+    });
+
+    if (!tokens.length) return;
+
+    /**
+     * 4️⃣ Push notifications
+     */
+    for (const { token } of tokens) {
+      await sendPushNotification({
+        token,
+        title,
+        body,
+        data: {
+          type: "post",
+          postId: String(responsePost.id),
+          url,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("⚠️ Error notificaciones post:", err);
   }
 };
 
@@ -280,10 +338,18 @@ const toggleLike = async (req, res) => {
     const { id: postId } = req.params;
     const userId = req.user.id;
 
+    const user = await User.findByPk(userId);
+    const post = await Post.findByPk(postId);
+
+    if (!post) {
+      await t.rollback();
+      return res.status(404).json({ message: "Post no encontrado" });
+    }
+
     const existing = await PostLike.findOne({
       where: { postId, userId },
       transaction: t,
-      lock: t.LOCK.UPDATE, // 🔒 evita condiciones de carrera
+      lock: t.LOCK.UPDATE,
     });
 
     let liked = false;
@@ -294,23 +360,15 @@ const toggleLike = async (req, res) => {
     } else {
       await PostLike.create({ postId, userId }, { transaction: t });
 
-      await addPoints(
-        userId,
-        10,
-        "reaction",
-        postId,
-        "Reaccionó a un post",
-        t, // 👈 IMPORTANTE
-      );
+      await addPoints(userId, 10, "reaction", postId, "Reaccionó a un post", t);
 
       liked = true;
     }
 
     await t.commit();
 
-    // 🔌 Emitir socket SOLO si todo fue correcto
+    // 🔌 Socket
     const io = require("../socket").getIO();
-
     io.emit("postLikeToggled", {
       postId,
       userId,
@@ -318,6 +376,57 @@ const toggleLike = async (req, res) => {
     });
 
     res.json({ success: true, liked });
+
+    // 🔔 NOTIFICACIÓN (fuera del flujo principal)
+    if (liked && post.userId !== userId) {
+      try {
+        // 1️⃣ Guardar en BD
+        await Notifications.create({
+          userId: post.userId,
+          actorId: userId,
+          type: "like",
+          title: "Nueva reacción ❤️",
+          body: `${user.name} reaccionó a tu publicación`,
+          url: `/comunidad/${postId}`,
+          data: { postId },
+        });
+
+        // 2️⃣ Obtener tokens
+        const tokens = await NotificationToken.findAll({
+          where: {
+            isActive: true,
+            device: { [Op.ne]: "safari" },
+          },
+          include: [
+            {
+              model: User,
+              as: "user",
+              where: {
+                id: post.userId,
+                isSubscribed: true,
+              },
+              attributes: [],
+            },
+          ],
+        });
+
+        // 3️⃣ Push
+        for (const tokenRow of tokens) {
+          await sendPushNotification({
+            token: tokenRow.token,
+            title: "Han reaccionado a tu publicación",
+            body: `${user.name} reaccionó a tu publicación`,
+            data: {
+              type: "like",
+              postId: String(postId),
+              url: `/comunidad/${postId}`,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("❌ Error notificación like:", err);
+      }
+    }
   } catch (error) {
     await t.rollback();
     console.error("❌ toggleLike error:", error);
@@ -328,45 +437,57 @@ const toggleLike = async (req, res) => {
 const addComment = async (req, res) => {
   const t = await sequelize.transaction();
   const userId = req.user.id;
+  const postId = req.params.id;
+
   const uploadedFiles = [];
+  let commentId = null;
 
   try {
+    const user = await User.findByPk(userId);
+    const post = await Post.findByPk(postId);
+
+    if (!post) {
+      throw new Error("Post no encontrado");
+    }
+
     const { content } = req.body;
     const files = req.files || [];
-    const postId = req.params.id;
+
+    // ✅ Validar archivos
+    for (const file of files) {
+      if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+        throw new Error(`Formato no soportado: ${file.originalname}`);
+      }
+    }
 
     // 1️⃣ Crear comentario
     const comment = await PostComment.create(
-      {
-        postId,
-        userId,
-        content,
-      },
+      { postId, userId, content },
       { transaction: t },
     );
+
+    commentId = comment.id;
 
     // 2️⃣ Puntos
     await addPoints(
       userId,
       20,
       "comment_created",
-      comment.id,
+      commentId,
       "Comentó un post",
       t,
     );
 
-    // 3️⃣ Procesar media
+    // 3️⃣ Media
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isVideo = file.mimetype.startsWith("video");
-
-      // 🔄 Convertir SOLO imágenes
       const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
 
       const media = await PostMedia.create(
         {
           modelType: "comment",
-          modelId: comment.id,
+          modelId: commentId,
           type: isVideo ? "video" : "image",
           order: i,
           url: "UPLOADING",
@@ -375,22 +496,20 @@ const addComment = async (req, res) => {
       );
 
       const finalPath = await uploadToS3("comment-media", mediaFile, media.id);
-
       uploadedFiles.push(finalPath);
 
       await media.update({ url: finalPath }, { transaction: t });
     }
 
-    // 4️⃣ Commit
     await t.commit();
 
-    // 5️⃣ Consultar comentario completo
-    const fullComment = await PostComment.findByPk(comment.id, {
+    // 4️⃣ Comentario completo
+    const fullComment = await PostComment.findByPk(commentId, {
       include: [
         {
           model: User,
-          attributes: ["id", "name", "profileImage"],
           as: "user",
+          attributes: ["id", "name", "profileImage"],
         },
         {
           model: PostMedia,
@@ -400,7 +519,6 @@ const addComment = async (req, res) => {
       ],
     });
 
-    // 6️⃣ Normalizar URLs
     const response = {
       ...fullComment.toJSON(),
       user: {
@@ -415,34 +533,178 @@ const addComment = async (req, res) => {
       })),
     };
 
-    // 7️⃣ WebSocket
-    const io = socketModule.getIO();
-    io.emit("createCommentPostCommunity", {
+    // 5️⃣ WebSocket
+    socketModule.getIO().emit("createCommentPostCommunity", {
       postId,
       comment: response,
       userId,
     });
 
-    res.json({
-      success: true,
-      data: response,
-    });
-  } catch (error) {
-    if (!t.finished) {
-      await t.rollback();
-    }
+    res.json({ success: true, data: response });
 
-    // 🧹 Limpieza S3 si algo falló
+    // 🔔 NOTIFICACIÓN
+    if (post.userId !== userId) {
+      try {
+        // 6️⃣ Guardar en DB
+        await Notifications.create({
+          userId: post.userId,
+          actorId: userId,
+          type: "comment",
+          title: "Nuevo comentario 💬",
+          body: `${user.name} comentó tu publicación`,
+          url: `/comunidad/${postId}`,
+          data: {
+            postId,
+            commentId,
+          },
+        });
+
+        // 7️⃣ Tokens
+        const tokens = await NotificationToken.findAll({
+          where: {
+            userId: post.userId,
+            isActive: true,
+            device: { [Op.ne]: "safari" },
+          },
+        });
+
+        // 8️⃣ Push
+        for (const tokenRow of tokens) {
+          await sendPushNotification({
+            token: tokenRow.token,
+            title: "Han comentado tu publicación 💬",
+            body: `${user.name} comentó tu post`,
+            data: {
+              type: "comment",
+              postId: String(postId),
+              commentId: String(commentId),
+              url: `/comunidad/${postId}`,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("⚠️ Error enviando notificación comentario:", err);
+      }
+    }
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+
     for (const key of uploadedFiles) {
       try {
         await deleteFromS3(key);
-      } catch (err) {
-        console.error("❌ Error limpiando S3:", err);
-      }
+      } catch {}
     }
 
     console.error("❌ addComment error:", error);
     res.status(500).json({ message: error.message });
+  }
+};
+
+const ShowOnePostById = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user?.id || null;
+
+    const post = await Post.findOne({
+      where: { id: postId },
+      include: [
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "name", "profileImage"],
+        },
+        {
+          model: PostMedia,
+          as: "media",
+          separate: true,
+          order: [["order", "ASC"]],
+        },
+        {
+          model: PostComment,
+          as: "comments",
+          attributes: ["id", "content", "createdAt"],
+          order: [["createdAt", "ASC"]], // 🔥 importante
+          include: [
+            {
+              model: PostMedia,
+              as: "media",
+              separate: true,
+              order: [["order", "ASC"]],
+            },
+            {
+              model: User,
+              as: "user",
+              attributes: ["id", "name", "profileImage"],
+            },
+          ],
+        },
+        {
+          model: PostLike,
+          as: "likes",
+          attributes: ["userId"], // 🔥 optimizado
+        },
+      ],
+    });
+
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post no encontrado",
+      });
+    }
+
+    const postJson = post.toJSON();
+
+    // ❤️ Like del usuario actual
+    const isLikedByMe = userId
+      ? postJson.likes.some((l) => l.userId === userId)
+      : false;
+
+    const postFormatted = {
+      id: postJson.id,
+      title: postJson.title,
+      content: postJson.content,
+      createdAt: postJson.createdAt,
+
+      user: {
+        ...postJson.user,
+        profileImage: postJson.user?.profileImage
+          ? getS3Url(postJson.user.profileImage)
+          : null,
+      },
+
+      media: (postJson.media || []).map((m) => ({
+        ...m,
+        url: getS3Url(m.url),
+      })),
+
+      comments: (postJson.comments || []).map((comment) => ({
+        ...comment,
+        user: {
+          ...comment.user,
+          profileImage: comment.user?.profileImage
+            ? getS3Url(comment.user.profileImage)
+            : null,
+        },
+        media: (comment.media || []).map((m) => ({
+          ...m,
+          url: getS3Url(m.url),
+        })),
+      })),
+
+      commentsCount: postJson.comments?.length || 0,
+      likesCount: postJson.likes?.length || 0,
+
+      isLikedByMe, // 🔥 UX PRO
+    };
+
+    return res.json({
+      success: true,
+      data: postFormatted,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener el post:", error);
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -451,4 +713,5 @@ module.exports = {
   getFeed,
   toggleLike,
   addComment,
+  ShowOnePostById,
 };

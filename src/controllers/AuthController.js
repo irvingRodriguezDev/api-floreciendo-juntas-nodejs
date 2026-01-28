@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { User, Subscription } = require("../models");
+const { User, Subscription, NotificationToken } = require("../models");
 const stripe = require("../config/stripe");
 const { addToBlacklist } = require("../utils/tokenBlacklist");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
@@ -46,7 +46,7 @@ const register = async (req, res) => {
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "7d",
+      expiresIn: "12h",
     });
 
     // Responder con token
@@ -74,15 +74,24 @@ const login = async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ where: { email } });
-    if (!user) return res.status(400).json({ msg: "Credenciales inválidas" });
+    if (!user) {
+      return res.status(400).json({ msg: "Credenciales inválidas" });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
+    if (!isMatch) {
       return res.status(400).json({ msg: "Credenciales inválidas" });
+    }
 
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-      expiresIn: "12h",
-    });
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        roleId: user.roleId,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "12h" },
+    );
 
     res.json({ msg: "Login exitoso", token, user });
   } catch (error) {
@@ -262,16 +271,33 @@ const createUserWithRole = async (req, res) => {
   }
 };
 
-const logout = (req, res) => {
-  const token = req.header("Authorization")?.replace("Bearer ", "");
+const logout = async (req, res) => {
+  try {
+    const token = req.header("Authorization")?.replace("Bearer ", "");
+    const { browserId } = req.body;
 
-  if (!token) {
-    return res.status(400).json({ msg: "Token no proporcionado" });
+    if (!token) {
+      return res.status(400).json({ msg: "Token no proporcionado" });
+    }
+
+    if (browserId) {
+      await NotificationToken.update(
+        { isActive: false },
+        {
+          where: {
+            userId: req.user.id,
+            browserId,
+          },
+        },
+      );
+    }
+
+    await addToBlacklist(token);
+
+    res.status(200).json({ msg: "Logout exitoso" });
+  } catch (error) {
+    res.status(500).json({ msg: "Error en logout", error: error.message });
   }
-
-  addToBlacklist(token);
-
-  res.status(200).json({ msg: "Logout exitoso. Token invalidado." });
 };
 
 const resetPassword = async (req, res) => {

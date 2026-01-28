@@ -10,6 +10,8 @@ const { Op, json, literal } = require("sequelize");
 const stripe = require("../config/stripe");
 const moment = require("moment-timezone");
 const { generateICSFile } = require("../helpers/generateCalendarLinks");
+const { User, Notifications, NotificationToken } = require("../models");
+const sendPushNotification = require("../services/sendPushNotification");
 
 // Crear un evento y generar tickets
 const RESERVATION_MINUTES = 15;
@@ -63,7 +65,7 @@ const createEvent = async (req, res) => {
         totalTickets,
         price,
       },
-      { transaction: t }
+      { transaction: t },
     );
 
     // Si se envió archivo, subir a S3 ANTES de crear tickets
@@ -99,6 +101,69 @@ const createEvent = async (req, res) => {
       event,
       ticketsCreated: totalTickets,
     });
+    try {
+      const creatorId = req.user.id;
+
+      const usersToNotify = await User.findAll({
+        where: {
+          roleId: 4,
+          isSubscribed: true,
+          id: { [Op.ne]: creatorId },
+        },
+        attributes: ["id"],
+      });
+
+      if (!usersToNotify.length) return;
+
+      const titleNotification = "Nuevo evento 🎉";
+      const bodyNotification = `Se ha creado un nuevo evento: ${event.title}`;
+      const url = `/detalle-evento/${event.id}`;
+
+      // 1️⃣ Guardar en DB
+      const notifications = usersToNotify.map((u) => ({
+        userId: u.id,
+        actorId: creatorId,
+        type: "event",
+        entityId: event.id,
+        title: titleNotification,
+        body: bodyNotification,
+        url,
+        data: {
+          eventId: event.id,
+          slug: event.slug,
+        },
+      }));
+
+      await Notifications.bulkCreate(notifications);
+
+      // 2️⃣ Tokens activos
+      const tokens = await NotificationToken.findAll({
+        where: {
+          isActive: true,
+          userId: usersToNotify.map((u) => u.id),
+          device: { [Op.ne]: "safari" },
+        },
+        attributes: ["token"],
+      });
+
+      if (!tokens.length) return;
+
+      // 3️⃣ Push
+      for (const { token } of tokens) {
+        await sendPushNotification({
+          token,
+          title: titleNotification,
+          body: bodyNotification,
+          data: {
+            type: "event",
+            eventId: String(event.id),
+            url,
+          },
+        });
+      }
+    } catch (err) {
+      console.error("⚠️ Error enviando notificaciones de evento:", err);
+    }
   } catch (error) {
     // ❌ Si algo falla, revertir TODO
     await t.rollback();
@@ -309,7 +374,7 @@ const updateEvent = async (req, res) => {
         .tz(
           `${startDate} ${timeToUse}`,
           "YYYY-MM-DD HH:mm",
-          "America/Mexico_City"
+          "America/Mexico_City",
         )
         .toDate();
     }
@@ -321,7 +386,7 @@ const updateEvent = async (req, res) => {
           .tz(
             `${endDate} ${timeToUse}`,
             "YYYY-MM-DD HH:mm",
-            "America/Mexico_City"
+            "America/Mexico_City",
           )
           .toDate();
       } else {
@@ -589,7 +654,7 @@ const downloadIcsFile = async (req, res) => {
 
     // Generar contenido del archivo .ics
     const ticketUrl = getS3Url(
-      `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticketId}`
+      `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticketId}`,
     );
     const icsContent = generateICSFile(event, ticketUrl, ticketId);
 
@@ -597,7 +662,7 @@ const downloadIcsFile = async (req, res) => {
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${event.slug}.ics"`
+      `attachment; filename="${event.slug}.ics"`,
     );
 
     // Enviar el contenido
@@ -653,6 +718,21 @@ const topEventsSales = async (req, res) => {
   }
 };
 
+const deleteEvent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await Event.findByPk(id);
+    if (!event) return res.status(404).json({ msg: "evento no encontrado" });
+
+    await event.destroy(); // o soft delete usando isActive = false
+
+    return res.json({ msg: "Evento eliminado" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ msg: "Error al eliminar el evento" });
+  }
+};
+
 module.exports = {
   buyTicket,
   getEventById,
@@ -663,4 +743,5 @@ module.exports = {
   updateEvent,
   downloadIcsFile,
   topEventsSales,
+  deleteEvent,
 };

@@ -10,7 +10,7 @@ router.post(
   "/",
   upload.single("image"),
   authMiddleware,
-  eventController.createEvent
+  eventController.createEvent,
 );
 router.get("/", eventController.getEvents);
 router.get("/topsales", eventController.topEventsSales);
@@ -19,6 +19,7 @@ router.get("/latest", eventController.getLatestEvents);
 router.get("/:eventId/:ticketId/calendar", eventController.downloadIcsFile);
 router.get("/:id", eventController.getEventById);
 router.put("/:id", upload.single("image"), eventController.updateEvent);
+router.delete("/:id", authMiddleware, eventController.deleteEvent);
 
 // Comprar ticket
 router.post("/buy/ticket", eventController.buyTicket);

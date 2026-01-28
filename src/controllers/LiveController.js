@@ -6,11 +6,12 @@ const {
   checkStreamIsLive,
 } = require("../services/awsIvsService");
 const { Op } = require("sequelize");
-const { Live } = require("../models");
+const { Live, User, Notifications, NotificationToken } = require("../models");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const moment = require("moment-timezone");
 const { getIO } = require("../socket");
+const sendPushNotification = require("../services/sendPushNotification");
 const nowCdmx = () => {
   return moment().tz("America/Mexico_City");
 };
@@ -425,11 +426,75 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       status: "live",
       startedAt: now.toISOString(),
     });
+    // 🔔 NOTIFICACIONES LIVE INICIADO
+    try {
+      const usersToNotify = await User.findAll({
+        where: {
+          roleId: 4,
+          isSubscribed: true,
+        },
+        attributes: ["id"],
+      });
+
+      if (!usersToNotify.length) return;
+
+      const title = "¡El live ya comenzó! 🔴";
+      const body = live.title
+        ? `${live.title} ya está en vivo`
+        : "Un live acaba de comenzar";
+
+      const url = `/detalle-live/${live.id}`;
+
+      // 1️⃣ Guardar notificaciones en DB
+      const notifications = usersToNotify.map((u) => ({
+        userId: u.id,
+        actorId: live.userId || null, // si el live tiene creador
+        type: "live",
+        entityId: live.id,
+        title,
+        body,
+        url,
+        data: {
+          liveId: live.id,
+          streamId,
+        },
+      }));
+
+      await Notifications.bulkCreate(notifications);
+
+      // 2️⃣ Tokens activos
+      const tokens = await NotificationToken.findAll({
+        where: {
+          isActive: true,
+          userId: usersToNotify.map((u) => u.id),
+          device: { [Op.ne]: "safari" },
+        },
+        attributes: ["token"],
+      });
+
+      if (!tokens.length) return;
+
+      // 3️⃣ Push
+      for (const { token } of tokens) {
+        await sendPushNotification({
+          token,
+          title,
+          body,
+          data: {
+            type: "live",
+            liveId: String(live.id),
+            url,
+          },
+        });
+      }
+    } catch (err) {
+      console.error("⚠️ Error enviando notificaciones live:", err);
+    }
 
     console.log(
       `✅ Live #${live.id} iniciado (start_time: ${moment(
-        live.start_time
-      ).format("YYYY-MM-DD HH:mm:ss")})`
+        live.start_time,
+      ).format("YYYY-MM-DD HH:mm:ss")})`,
     );
   } catch (error) {
     console.error("❌ Error en handleStreamStart:", error);

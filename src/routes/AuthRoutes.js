@@ -22,7 +22,7 @@ router.post(
   "/uploadProfileImage",
   upload.single("file"),
   authMiddleware,
-  uploadProfileImage
+  uploadProfileImage,
 );
 router.get("/profile", authMiddleware, profile);
 router.get("/me", authMiddleware, me);
@@ -34,7 +34,7 @@ router.post(
   upload.single("profileImage"),
   authMiddleware,
   checkRole([1]),
-  createUserWithRole
+  createUserWithRole,
 );
 
 module.exports = router;

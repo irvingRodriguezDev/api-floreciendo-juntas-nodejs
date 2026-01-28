@@ -37,6 +37,8 @@ const Post = require("./Post");
 const PostMedia = require("./PostMedia");
 const PostComment = require("./PostComment");
 const PostLike = require("./PostLike");
+const NotificationToken = require("./NotificationToken");
+const Notifications = require("./Notifications");
 // Registrar modelos
 const db = {
   sequelize,
@@ -74,11 +76,27 @@ const db = {
   PostComment,
   PostLike,
   PostMedia,
+  NotificationToken,
+  Notifications,
 };
 
 // 🔹 Relaciones entre Role y User
 Role.hasMany(User, { as: "users", foreignKey: "roleId" });
 User.belongsTo(Role, { as: "role", foreignKey: "roleId" });
+User.hasOne(Subscription, {
+  foreignKey: "userId",
+  as: "subscription",
+});
+//usuario que recibe la notificacion
+Notifications.belongsTo(User, {
+  foreignKey: "userId",
+  as: "receiver",
+});
+//usuario que genero la accion
+Notifications.belongsTo(User, {
+  foreignKey: "actorId",
+  as: "actor",
+});
 User.hasMany(Address, { foreignKey: "userId" });
 Address.belongsTo(User, { foreignKey: "userId" });
 // 🔹 Relaciones entre Product y ProductImage
@@ -198,6 +216,11 @@ PostLike.belongsTo(User, {
   foreignKey: "userId",
   as: "user",
 });
+NotificationToken.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+User.hasMany(NotificationToken, { foreignKey: "user_id" });
 
 User.hasMany(PostLike, {
   foreignKey: "userId",
@@ -227,6 +250,8 @@ PostComment.hasMany(PostMedia, {
   },
   as: "media",
 });
+//notificaciones
+
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {

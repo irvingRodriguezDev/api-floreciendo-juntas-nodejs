@@ -10,6 +10,8 @@ const { Upload } = require("@aws-sdk/lib-storage");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const CourseVideo = require("../models/CourseVideo");
 const sequelize = require("../config/db");
+const { User, Notifications, NotificationToken } = require("../models");
+const sendPushNotification = require("../services/sendPushNotification");
 const s3 = new S3Client({ region: "us-east-2" });
 const BUCKET_NAME = "floreciendo-videos-cursos";
 
@@ -37,7 +39,7 @@ const generatePresignedUrl = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores DEL CURSO
       await CourseVideo.update(
         { is_active: false },
-        { where: { courseId }, transaction: t }
+        { where: { courseId }, transaction: t },
       );
 
       // 2️⃣ Crear registro nuevo
@@ -49,7 +51,7 @@ const generatePresignedUrl = async (req, res) => {
           is_active: true,
           durationSeconds,
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       // 3️⃣ Generar s3Key definitivo
@@ -127,6 +129,75 @@ const updateVideo = async (req, res) => {
     };
 
     await video.update(updatePayload);
+    // 🔔 NOTIFICACIONES VIDEO LISTO
+    try {
+      // Solo notificar si el video acaba de quedar listo
+      const wasReady = video.status === "listo";
+      const isReadyNow = updatePayload.status === "listo";
+
+      if (!wasReady && isReadyNow) {
+        const usersToNotify = await User.findAll({
+          where: {
+            roleId: 4,
+            isSubscribed: true,
+          },
+          attributes: ["id"],
+        });
+
+        if (!usersToNotify.length) return;
+
+        const title = "Nuevo curso disponible 🎬";
+        const body = "Un nuevo curso está disponible";
+
+        const url = `/detalle-curso/${video.courseId}`;
+
+        // 1️⃣ Guardar notificaciones en DB
+        const notifications = usersToNotify.map((u) => ({
+          userId: u.id,
+          actorId: null,
+          type: "course",
+          entityId: video.id,
+          title,
+          body,
+          url,
+          data: {
+            videoId: video.id,
+            courseId: video.courseId,
+          },
+        }));
+
+        await Notifications.bulkCreate(notifications);
+
+        // 2️⃣ Tokens activos
+        const tokens = await NotificationToken.findAll({
+          where: {
+            isActive: true,
+            userId: usersToNotify.map((u) => u.id),
+            device: { [Op.ne]: "safari" },
+          },
+          attributes: ["token"],
+        });
+
+        if (!tokens.length) return;
+
+        // 3️⃣ Push
+        for (const { token } of tokens) {
+          await sendPushNotification({
+            token,
+            title,
+            body,
+            data: {
+              type: "course",
+              videoId: String(video.id),
+              courseId: String(video.courseId),
+              url,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("⚠️ Error enviando notificaciones de video:", err);
+    }
 
     return res
       .json({ message: "El video se ha actualizado correctamente" })
@@ -153,7 +224,7 @@ const initMultipartUpload = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores
       await CourseVideo.update(
         { is_active: false },
-        { where: { courseId }, transaction: t }
+        { where: { courseId }, transaction: t },
       );
 
       // 2️⃣ Crear registro del video (🔥 IGUAL QUE ANTES)
@@ -165,7 +236,7 @@ const initMultipartUpload = async (req, res) => {
           is_active: true,
           durationSeconds,
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       // 3️⃣ Generar s3Key (🔥 INCLUYE video.id)
@@ -189,7 +260,7 @@ const initMultipartUpload = async (req, res) => {
     // (opcional) guardar uploadId
     await CourseVideo.update(
       { uploadId: UploadId },
-      { where: { id: result.videoId } }
+      { where: { id: result.videoId } },
     );
 
     return res.json({
@@ -244,7 +315,7 @@ const completeMultipartUpload = async (req, res) => {
 
     await CourseVideo.update(
       { status: "subiendo" },
-      { where: { id: videoId } }
+      { where: { id: videoId } },
     );
 
     res.json({ success: true });
