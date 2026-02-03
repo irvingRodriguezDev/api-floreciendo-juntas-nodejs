@@ -12,7 +12,7 @@ const {
 } = require("../models");
 const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
-const socketModule = require("../socket");
+const { getIO } = require("../socket");
 const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const { Op } = require("sequelize");
@@ -112,7 +112,8 @@ const createPost = async (req, res) => {
     };
 
     // 4️⃣ WebSocket
-    socketModule.getIO().emit("postCommunityCreated", responsePost);
+    const io = getIO();
+    io.emit("postCommunityCreated", responsePost);
 
     res.json({ success: true, post: responsePost });
   } catch (error) {
@@ -371,7 +372,7 @@ const toggleLike = async (req, res) => {
     await t.commit();
 
     // 🔌 Socket
-    const io = require("../socket").getIO();
+    const io = getIO();
     io.emit("postLikeToggled", {
       postId,
       userId,
@@ -537,7 +538,8 @@ const addComment = async (req, res) => {
     };
 
     // 5️⃣ WebSocket
-    socketModule.getIO().emit("createCommentPostCommunity", {
+    const io = getIO();
+    io.emit("createCommentPostCommunity", {
       postId,
       comment: response,
       userId,
