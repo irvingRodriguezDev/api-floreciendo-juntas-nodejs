@@ -9,7 +9,7 @@ router.post(
   upload.array("files", 6),
   postController.createPost,
 );
-router.get("/", postController.getFeed);
+router.get("/", authMiddleware, postController.getFeed);
 router.post(
   "/:id/comments",
   authMiddleware,

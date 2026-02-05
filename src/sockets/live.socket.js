@@ -11,7 +11,7 @@ module.exports = (io, socket) => {
           live_id: liveId,
         },
         order: [["createdAt", "DESC"]],
-        limit: 15,
+        limit: 35,
       });
 
       // 🔁 Enviar en orden correcto (viejo → nuevo)

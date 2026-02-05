@@ -202,7 +202,7 @@ const createPost = async (req, res) => {
 const getFeed = async (req, res) => {
   try {
     const { search } = req.query;
-
+    const userId = req.user.id;
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
     const offset = (page - 1) * limit;
@@ -263,7 +263,7 @@ const getFeed = async (req, res) => {
         {
           model: PostLike,
           as: "likes",
-          attributes: ["id"],
+          attributes: ["userId"],
         },
       ],
     };
@@ -278,10 +278,10 @@ const getFeed = async (req, res) => {
 
     const posts = rows.map((post) => {
       const postJson = post.toJSON();
-
+      const likedByMe = postJson.likes.some((like) => like.userId === userId);
       return {
         ...postJson,
-
+        likedByMe,
         user: {
           ...postJson.user,
           profileImage: postJson.user?.profileImage
@@ -342,7 +342,8 @@ const toggleLike = async (req, res) => {
     const { id: postId } = req.params;
     const userId = req.user.id;
 
-    const user = await User.findByPk(userId);
+    // Buscamos usuario y post (Podrías optimizar pidiendo solo los atributos necesarios)
+    const user = await User.findByPk(userId, { attributes: ["id", "name"] });
     const post = await Post.findByPk(postId);
 
     if (!post) {
@@ -363,76 +364,76 @@ const toggleLike = async (req, res) => {
       liked = false;
     } else {
       await PostLike.create({ postId, userId }, { transaction: t });
-
+      // Sumar puntos
       await addPoints(userId, 10, "reaction", postId, "Reaccionó a un post", t);
-
       liked = true;
     }
 
     await t.commit();
 
-    // 🔌 Socket
+    // 🔌 SOCKET CORREGIDO
     const io = getIO();
+    // Enviamos el userId para que el frontend pueda decir:
+    // "Si el userId de este socket soy yo, no hago nada porque ya lo hice optimista"
     io.emit("postLikeToggled", {
-      postId,
+      postId: Number(postId), // Aseguramos que sea número
       userId,
       liked,
     });
 
+    // Respondemos rápido al cliente
     res.json({ success: true, liked });
 
-    // 🔔 NOTIFICACIÓN (fuera del flujo principal)
+    // 🔔 NOTIFICACIONES (Lógica asíncrona fuera del res.json)
     if (liked && post.userId !== userId) {
-      try {
-        // 1️⃣ Guardar en BD
-        const notification = await Notifications.create({
-          userId: post.userId,
-          actorId: userId,
-          type: "like",
-          title: "Nueva reacción ❤️",
-          body: `${user.name} reaccionó a tu publicación`,
-          url: `/comunidad/${postId}`,
-          data: { postId },
-        });
-        emitNotification(post.userId, notification);
-        // 2️⃣ Obtener tokens
-        const tokens = await NotificationToken.findAll({
-          where: {
-            isActive: true,
-            device: { [Op.ne]: "safari" },
-          },
-          include: [
-            {
-              model: User,
-              as: "user",
-              where: {
-                id: post.userId,
-                isSubscribed: true,
-              },
-              attributes: [],
-            },
-          ],
-        });
-
-        // 3️⃣ Push
-        for (const tokenRow of tokens) {
-          await sendPushNotification({
-            token: tokenRow.token,
-            title: "Han reaccionado a tu publicación",
+      // Usamos un proceso separado (setImmediate o simplemente no esperar con await el bloque completo)
+      // para que la respuesta al usuario sea instantánea.
+      setImmediate(async () => {
+        try {
+          const notification = await Notifications.create({
+            userId: post.userId,
+            actorId: userId,
+            type: "like",
+            title: "Nueva reacción ❤️",
             body: `${user.name} reaccionó a tu publicación`,
-            data: {
-              type: "like",
-              postId: String(postId),
-              url: `/comunidad/${postId}`,
-            },
+            url: `/comunidad/${postId}`,
+            data: { postId },
           });
+
+          emitNotification(post.userId, notification);
+
+          const tokens = await NotificationToken.findAll({
+            where: { isActive: true, device: { [Op.ne]: "safari" } },
+            include: [
+              {
+                model: User,
+                as: "user",
+                where: { id: post.userId, isSubscribed: true },
+                attributes: [],
+              },
+            ],
+          });
+
+          for (const tokenRow of tokens) {
+            sendPushNotification({
+              // Quitamos el await aquí para que sea paralelo
+              token: tokenRow.token,
+              title: "Han reaccionado a tu publicación",
+              body: `${user.name} reaccionó a tu publicación`,
+              data: {
+                type: "like",
+                postId: String(postId),
+                url: `/comunidad/${postId}`,
+              },
+            }).catch((e) => console.error("Push error:", e));
+          }
+        } catch (err) {
+          console.error("❌ Error notificación like:", err);
         }
-      } catch (err) {
-        console.error("❌ Error notificación like:", err);
-      }
+      });
     }
   } catch (error) {
-    await t.rollback();
+    if (t) await t.rollback();
     console.error("❌ toggleLike error:", error);
     res.status(500).json({ message: error.message });
   }
