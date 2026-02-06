@@ -1,9 +1,15 @@
 const getS3Url = (path) => {
-  if (!path) return null; // Si no hay imagen, retorna null
+  if (!path) return null;
 
-  // Asegura que el path empiece con "/"
+  // Normaliza el path
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
+  // Si hay CDN, úsalo (CloudFront)
+  if (process.env.AWS_CDN_URL) {
+    return `https://${process.env.AWS_CDN_URL}${normalizedPath}`;
+  }
+
+  // Fallback directo a S3 (local / emergencia)
   return `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com${normalizedPath}`;
 };
 
