@@ -8,6 +8,7 @@ const {
   logout,
   resetPassword,
   uploadProfileImage,
+  updateInfoUser,
 } = require("../controllers/AuthController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
@@ -26,8 +27,8 @@ router.post(
 );
 router.get("/profile", authMiddleware, profile);
 router.get("/me", authMiddleware, me);
+router.put("/user/update", authMiddleware, updateInfoUser);
 router.post("/logout", authMiddleware, logout);
-
 // Solo admin puede crear otros usuarios especiales
 router.post(
   "/create-user",

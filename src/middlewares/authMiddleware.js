@@ -1,23 +1,52 @@
 // middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 const { isBlacklisted } = require("../utils/tokenBlacklist");
 
-const authMiddleware = (req, res, next) => {
+const authMiddleware = async (req, res, next) => {
   const token = req.header("Authorization")?.replace("Bearer ", "");
 
-  if (!token)
+  if (!token) {
     return res.status(401).json({ msg: "Acceso denegado. Token requerido" });
+  }
 
-  if (isBlacklisted(token))
+  if (isBlacklisted(token)) {
     return res.status(401).json({ msg: "Token inválido (logout realizado)" });
+  }
+
+  let decoded;
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
-    res.status(401).json({ msg: "Token inválido o expirado" });
+    return res.status(401).json({
+      msg: "Token inválido o expirado",
+    });
   }
+
+  // 🔍 Buscar usuario en BD
+  const user = await User.findByPk(decoded.id);
+  if (!user) {
+    return res.status(401).json({ msg: "Usuario no válido" });
+  }
+
+  // 🔐 Validar sesión única SOLO si existe sessionId
+  if (
+    decoded.sessionId &&
+    user.session_id &&
+    user.session_id !== decoded.sessionId
+  ) {
+    return res.status(401).json({
+      msg: "Sesión inválida",
+      reason: "multiple_session",
+    });
+  }
+
+  // ✅ Todo OK
+  req.user = user;
+  req.token = token;
+
+  next();
 };
 
 module.exports = authMiddleware;

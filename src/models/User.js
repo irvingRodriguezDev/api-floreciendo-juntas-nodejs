@@ -37,6 +37,10 @@ const User = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    session_id: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     roleId: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -74,7 +78,7 @@ const User = sequelize.define(
   },
   {
     tableName: "Users",
-  }
+  },
 );
 
 module.exports = User;

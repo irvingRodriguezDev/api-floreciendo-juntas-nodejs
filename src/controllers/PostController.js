@@ -38,27 +38,72 @@ const createPost = async (req, res) => {
   let responsePost = null;
   const uploadedFiles = [];
 
-  const user = await User.findByPk(userId);
   try {
-    const { title, content } = req.body;
+    const { title, content = "" } = req.body;
     const files = req.files || [];
 
-    // Validar archivos
+    /* ======================
+       Validaciones básicas
+    ====================== */
+    if (!title || !title.trim()) {
+      return res.status(400).json({ message: "El título es obligatorio" });
+    }
+
+    if (title.length > 120) {
+      return res
+        .status(400)
+        .json({ message: "El título excede el límite permitido" });
+    }
+
+    if (!content.trim()) {
+      return res.status(400).json({ message: "El contenido es obligatorio" });
+    }
+
+    if (content.length > 1500) {
+      return res
+        .status(400)
+        .json({ message: "El contenido es demasiado largo" });
+    }
+
+    if (files.length > 4) {
+      return res.status(400).json({ message: "Máximo 4 archivos permitidos" });
+    }
+
+    const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
     for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        return res.status(400).json({ message: "Archivo demasiado grande" });
+      }
+
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-        throw new Error(`Formato no soportado: ${file.originalname}`);
+        return res.status(400).json({
+          message: `Formato no soportado: ${file.originalname}`,
+        });
       }
     }
 
-    // 1️⃣ Crear post
+    /* ======================
+       Usuario
+    ====================== */
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    /* ======================
+       Crear post
+    ====================== */
     const post = await Post.create(
-      { userId, title, content },
+      { userId, title: title.trim(), content: content.trim() },
       { transaction: t },
     );
 
     await addPoints(userId, 30, "post_created", post.id, "Publicó un post", t);
 
-    // 2️⃣ Media
+    /* ======================
+       Media
+    ====================== */
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isVideo = file.mimetype.startsWith("video");
@@ -83,7 +128,9 @@ const createPost = async (req, res) => {
 
     await t.commit();
 
-    // 3️⃣ Post completo
+    /* ======================
+       Post completo
+    ====================== */
     const createdPost = await Post.findByPk(post.id, {
       include: [
         { model: PostMedia, as: "media", order: [["order", "ASC"]] },
@@ -111,7 +158,9 @@ const createPost = async (req, res) => {
       })),
     };
 
-    // 4️⃣ WebSocket
+    /* ======================
+       WebSocket
+    ====================== */
     const io = getIO();
     io.emit("postCommunityCreated", responsePost);
 
@@ -123,13 +172,20 @@ const createPost = async (req, res) => {
       try {
         const key = fileUrl.replace(`${process.env.CLOUDFRONT_URL}/`, "");
         await deleteFromS3(key);
-      } catch {}
+      } catch (err) {
+        console.error("Error limpiando S3:", err);
+      }
     }
 
     return res.status(500).json({ message: error.message });
   }
-  if (!responsePost?.id) return;
+
+  /* ======================
+     Notificaciones
+  ====================== */
   try {
+    if (!responsePost?.id) return;
+
     const usersToNotify = await User.findAll({
       where: {
         roleId: 4,
@@ -142,12 +198,9 @@ const createPost = async (req, res) => {
     if (!usersToNotify.length) return;
 
     const title = "Nuevo post 🌸";
-    const body = `${user.name} publicó un nuevo post`;
+    const body = `${responsePost.user.name} publicó un nuevo post`;
     const url = `/comunidad/${responsePost.id}`;
 
-    /**
-     * 2️⃣ Guardar notificaciones en DB
-     */
     const notifications = usersToNotify.map((u) => ({
       userId: u.id,
       actorId: userId,
@@ -156,18 +209,12 @@ const createPost = async (req, res) => {
       title,
       body,
       url,
-      data: {
-        postId: responsePost.id,
-      },
+      data: { postId: responsePost.id },
     }));
 
     await Notifications.bulkCreate(notifications);
-    for (const notification of notifications) {
-      emitNotification(notification.userId, notification);
-    }
-    /**
-     * 3️⃣ Tokens activos de esos usuarios
-     */
+    notifications.forEach((n) => emitNotification(n.userId, n));
+
     const tokens = await NotificationToken.findAll({
       where: {
         isActive: true,
@@ -177,11 +224,6 @@ const createPost = async (req, res) => {
       attributes: ["token"],
     });
 
-    if (!tokens.length) return;
-
-    /**
-     * 4️⃣ Push notifications
-     */
     for (const { token } of tokens) {
       await sendPushNotification({
         token,

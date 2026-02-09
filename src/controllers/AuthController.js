@@ -8,6 +8,8 @@ const getS3Url = require("../helpers/getS3Url");
 const { validationResult } = require("express-validator");
 const socketModule = require("../socket");
 const sequelize = require("../config/db");
+const { v4: uuidv4 } = require("uuid");
+
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -26,7 +28,7 @@ const register = async (req, res) => {
       name,
       phone,
     });
-
+    const sessionId = uuidv4();
     // Crear usuario en la base de datos
     const newUser = await User.create({
       email,
@@ -36,6 +38,7 @@ const register = async (req, res) => {
       password: hashedPassword,
       roleId: 4,
       stripe_id: stripeCustomer.id,
+      session_id: sessionId,
     });
 
     // Generar JWT
@@ -43,6 +46,7 @@ const register = async (req, res) => {
       id: newUser.id,
       email: newUser.email,
       roleId: newUser.roleId,
+      sessionId,
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
@@ -82,12 +86,16 @@ const login = async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ msg: "Credenciales inválidas" });
     }
+    // 🔑 Generar nueva sesión (mata sesiones anteriores)
+    const sessionId = uuidv4();
+    await user.update({ session_id: sessionId });
 
     const token = jwt.sign(
       {
         id: user.id,
         email: user.email,
         roleId: user.roleId,
+        sessionId,
       },
       process.env.JWT_SECRET,
       { expiresIn: "12h" },
@@ -280,6 +288,7 @@ const logout = async (req, res) => {
       return res.status(400).json({ msg: "Token no proporcionado" });
     }
 
+    // 🔕 Desactivar notificaciones del navegador
     if (browserId) {
       await NotificationToken.update(
         { isActive: false },
@@ -292,7 +301,11 @@ const logout = async (req, res) => {
       );
     }
 
-    await addToBlacklist(token);
+    // 🔥 Invalidar sesión activa
+    await req.user.update({ session_id: null });
+
+    // 🔒 Invalidar token actual
+    addToBlacklist(token);
 
     res.status(200).json({ msg: "Logout exitoso" });
   } catch (error) {
@@ -391,6 +404,98 @@ const uploadProfileImage = async (req, res) => {
   }
 };
 
+const updateInfoUser = async (req, res) => {
+  try {
+    const { name, phone, email } = req.body;
+
+    // 1️⃣ Validar que al menos un campo venga
+    if (!name && !phone && !email) {
+      return res.status(400).json({
+        message: "Debes enviar al menos un campo para actualizar",
+      });
+    }
+
+    // 2️⃣ Buscar usuario
+    const user = await User.findByPk(req.user.id, {
+      attributes: [
+        "id",
+        "email",
+        "name",
+        "username",
+        "stripe_id",
+        "profileImage",
+        "phone",
+        "roleId",
+        "createdAt",
+      ], // Mantenemos stripe_id por si acaso
+      // 2. Incluimos el modelo Subscription
+      include: [
+        {
+          model: Subscription,
+          as: "Subscriptions", // Si tienes un alias, úsalo aquí. Por defecto, puede ser 'Subscriptions'.
+          // Buscamos solo la suscripción activa
+          where: {
+            status: "active",
+          },
+          required: false, // Usamos LEFT JOIN (el usuario se trae aunque no tenga suscripción)
+          limit: 1, // Solo necesitamos el registro activo más reciente
+          order: [["end_date", "DESC"]], // Ordenar para obtener el más reciente/relevante
+        },
+      ],
+    });
+    if (!user) {
+      return res.status(404).json({
+        message: "Usuario no encontrado",
+      });
+    }
+
+    // 3️⃣ Actualizar solo lo que venga
+    if (name) user.name = name;
+    if (phone) user.phone = phone;
+    if (email) user.email = email;
+
+    await user.save();
+    const activeSubscription =
+      user.Subscriptions && user.Subscriptions.length > 0
+        ? user.Subscriptions[0]
+        : null;
+
+    const isSubscribed = activeSubscription !== null;
+    // 4️⃣ Respuesta
+    return res.json({
+      message: "Información actualizada correctamente",
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        username: user.username,
+        phone: user.phone,
+        roleId: user.roleId,
+        isSubscribed: isSubscribed, // Boolean: true/false
+        profileImage: getS3Url(user.profileImage),
+        member_since: user.createdAt,
+        stripe_id: user.stripe_id,
+        // Puedes enviar los detalles de la suscripción activa si los necesitas en el front
+        subscriptionDetails: isSubscribed
+          ? {
+              type: activeSubscription.subscription_type,
+              status: activeSubscription.status,
+              startDate: activeSubscription.start_date,
+              endDate: activeSubscription.end_date,
+              nextRenewal: activeSubscription.next_renewal,
+              will_cancel_at: activeSubscription.will_cancel_at,
+            }
+          : null,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      message: "Error al actualizar usuario",
+    });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -400,4 +505,5 @@ module.exports = {
   logout,
   resetPassword,
   uploadProfileImage,
+  updateInfoUser,
 };

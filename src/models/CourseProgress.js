@@ -23,10 +23,13 @@ const CourseProgress = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
+    certificateEnabled: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
     percent: {
-      type: DataTypes.DECIMAL(5, 2),
-      allowNull: false,
-      defaultValue: 0.0,
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
     },
     completedAt: {
       type: DataTypes.DATE,
@@ -42,7 +45,7 @@ const CourseProgress = sequelize.define(
         fields: ["userId", "courseId"],
       },
     ],
-  }
+  },
 );
 
 // 🔗 Asociaciones
