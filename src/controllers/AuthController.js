@@ -86,24 +86,41 @@ const login = async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ msg: "Credenciales inválidas" });
     }
-    // 🔑 Generar nueva sesión (mata sesiones anteriores)
-    const sessionId = uuidv4();
-    await user.update({ session_id: sessionId });
 
-    const token = jwt.sign(
-      {
-        id: user.id,
-        email: user.email,
-        roleId: user.roleId,
-        sessionId,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "12h" },
-    );
+    let sessionId = null;
 
-    res.json({ msg: "Login exitoso", token, user });
+    // 🔑 SOLO usuarios normales (roleId === 4)
+    if (user.roleId === 4) {
+      sessionId = uuidv4();
+      await user.update({ session_id: sessionId });
+    }
+
+    const tokenPayload = {
+      id: user.id,
+      email: user.email,
+      roleId: user.roleId,
+    };
+
+    // 👉 solo agregar sessionId si aplica
+    if (sessionId) {
+      tokenPayload.sessionId = sessionId;
+    }
+
+    const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
+      expiresIn: "12h",
+    });
+
+    res.json({
+      msg: "Login exitoso",
+      token,
+      user,
+    });
   } catch (error) {
-    res.status(500).json({ message: "Error en login", error: error.message });
+    console.error("Login error:", error);
+    res.status(500).json({
+      message: "Error en login",
+      error: error.message,
+    });
   }
 };
 
@@ -288,7 +305,7 @@ const logout = async (req, res) => {
       return res.status(400).json({ msg: "Token no proporcionado" });
     }
 
-    // 🔕 Desactivar notificaciones del navegador
+    // 🔕 Desactivar notificaciones SOLO de este navegador
     if (browserId) {
       await NotificationToken.update(
         { isActive: false },
@@ -301,15 +318,21 @@ const logout = async (req, res) => {
       );
     }
 
-    // 🔥 Invalidar sesión activa
-    await req.user.update({ session_id: null });
+    // 🔥 Invalidar sesión única SOLO para usuarios finales
+    if (req.user.roleId === 4) {
+      await req.user.update({ session_id: null });
+    }
 
     // 🔒 Invalidar token actual
     addToBlacklist(token);
 
-    res.status(200).json({ msg: "Logout exitoso" });
+    return res.status(200).json({ msg: "Logout exitoso" });
   } catch (error) {
-    res.status(500).json({ msg: "Error en logout", error: error.message });
+    console.error("Logout error:", error);
+    return res.status(500).json({
+      msg: "Error en logout",
+      error: error.message,
+    });
   }
 };
 
@@ -334,7 +357,7 @@ const resetPassword = async (req, res) => {
 
     if (!user) {
       return res
-        .status(404)
+        .status(400)
         .json({ message: "No existe una cuenta con ese correo." });
     }
 

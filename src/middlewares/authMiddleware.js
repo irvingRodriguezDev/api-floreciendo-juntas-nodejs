@@ -15,31 +15,30 @@ const authMiddleware = async (req, res, next) => {
   }
 
   let decoded;
-
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
-    return res.status(401).json({
-      msg: "Token inválido o expirado",
-    });
+    return res.status(401).json({ msg: "Token inválido o expirado" });
   }
 
-  // 🔍 Buscar usuario en BD
+  // 🔍 Usuario
   const user = await User.findByPk(decoded.id);
   if (!user) {
     return res.status(401).json({ msg: "Usuario no válido" });
   }
 
-  // 🔐 Validar sesión única SOLO si existe sessionId
-  if (
-    decoded.sessionId &&
-    user.session_id &&
-    user.session_id !== decoded.sessionId
-  ) {
-    return res.status(401).json({
-      msg: "Sesión inválida",
-      reason: "multiple_session",
-    });
+  // 🔐 Sesión única SOLO para roleId === 4
+  if (decoded.roleId === 4) {
+    if (
+      !decoded.sessionId ||
+      !user.session_id ||
+      user.session_id !== decoded.sessionId
+    ) {
+      return res.status(401).json({
+        msg: "Sesión expirada",
+        reason: "multiple_session",
+      });
+    }
   }
 
   // ✅ Todo OK

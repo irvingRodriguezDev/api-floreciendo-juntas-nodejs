@@ -69,7 +69,7 @@ const createCourse = async (req, res) => {
       const certificateKey = await uploadToS3(
         "certificates",
         certificateFile,
-        certificateRecord.id
+        certificateRecord.id,
       );
       await certificateRecord.update({ s3_key_certificate: certificateKey });
     }
@@ -128,7 +128,7 @@ const getCourses = async (req, res) => {
 
     const formatted = courses.map((c) => ({
       ...c.toJSON(),
-      cover_image_url: c.images?.[0] ? c.images[0].s3_key : null,
+      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
       certificate_url: c.certificates?.[0]
         ? getS3Url(c.certificates[0].s3_key_certificate)
         : null,
@@ -494,7 +494,7 @@ const updateCourse = async (req, res) => {
       // Desactivar imágenes actuales
       if (course.images?.length > 0) {
         await Promise.all(
-          course.images.map((img) => img.update({ is_active: false }))
+          course.images.map((img) => img.update({ is_active: false })),
         );
       }
 
@@ -517,7 +517,7 @@ const updateCourse = async (req, res) => {
       // Desactivar certificados actuales
       if (course.certificates?.length > 0) {
         await Promise.all(
-          course.certificates.map((cert) => cert.update({ is_active: false }))
+          course.certificates.map((cert) => cert.update({ is_active: false })),
         );
       }
 
@@ -530,7 +530,7 @@ const updateCourse = async (req, res) => {
       const certificateKey = await uploadToS3(
         "certificates",
         certificateFile,
-        certificateRecord.id
+        certificateRecord.id,
       );
 
       await certificateRecord.update({ s3_key_certificate: certificateKey });
