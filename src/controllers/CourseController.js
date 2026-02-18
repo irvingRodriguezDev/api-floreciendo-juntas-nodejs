@@ -47,6 +47,23 @@ const createCourse = async (req, res) => {
     // Manejo de archivos
     const imageFile = req.files?.coverImage?.[0];
     const certificateFile = req.files?.certificate?.[0];
+    const workbookFile = req.files?.workbook?.[0];
+
+    if (workbookFile) {
+      if (workbookFile.mimetype !== "application/pdf") {
+        return res.status(400).json({
+          message: "El workbook debe ser un archivo PDF",
+        });
+      }
+
+      const workbookKey = await uploadToS3(
+        "workbooks",
+        workbookFile,
+        course.id,
+      );
+
+      await course.update({ workbookUrl: workbookKey });
+    }
 
     if (imageFile) {
       const imageRecord = await ImageCourses.create({
@@ -431,7 +448,7 @@ const getCourseById = async (req, res) => {
           model: CourseVideo,
           as: "video", // Asegúrate de usar el mismo alias definido en la asociación
           where: { is_active: true },
-          required: true, // el curso puede no tener video aún
+          required: false, // el curso puede no tener video aún
         },
         {
           model: CertificateCourse,
@@ -450,17 +467,24 @@ const getCourseById = async (req, res) => {
     // ✅ Generar URL completa para las imágenes desde S3
     const formattedCourse = {
       ...course.toJSON(),
+
       cover_image_url: course.images?.[0]
         ? getS3Url(course.images[0].s3_key)
         : null,
+
       video_url: course.video?.cloudfrontUrl || null,
+
       images: course.images?.map((img) => ({
         ...img.toJSON(),
         url: getS3Url(img.s3_key),
       })),
+
       certificate_url: course.certificates?.[0]
         ? getS3Url(course.certificates[0].s3_key_certificate)
         : null,
+
+      // 🔥 AQUÍ agregamos el workbook
+      workbook_url: course.workbookUrl ? getS3Url(course.workbookUrl) : null,
     };
 
     return res.status(200).json(formattedCourse);
@@ -488,6 +512,7 @@ const updateCourse = async (req, res) => {
 
     const imageFile = req.files?.coverImage?.[0];
     const certificateFile = req.files?.certificate?.[0];
+    const workbookFile = req.files?.workbook?.[0];
 
     // ✅ Subir nueva imagen si llega archivo
     if (imageFile) {
@@ -520,12 +545,12 @@ const updateCourse = async (req, res) => {
           course.certificates.map((cert) => cert.update({ is_active: false })),
         );
       }
-
       const certificateRecord = await CertificateCourse.create({
         courseId: course.id,
         s3_key_certificate: "",
         is_active: true,
       });
+      await Course.update({ hasCertificate: true });
 
       const certificateKey = await uploadToS3(
         "certificates",
@@ -535,7 +560,17 @@ const updateCourse = async (req, res) => {
 
       await certificateRecord.update({ s3_key_certificate: certificateKey });
     }
+    if (workbookFile) {
+      const workbookKey = await uploadToS3(
+        "workbooks",
+        workbookFile,
+        course.id,
+      );
 
+      await course.update({
+        workbookUrl: workbookKey,
+      });
+    }
     // ✅ Actualizar otros campos del curso
     await course.update(req.body);
 
@@ -564,6 +599,9 @@ const updateCourse = async (req, res) => {
         : null,
       certificate_url: updatedCourse.certificates?.[0]
         ? getS3Url(updatedCourse.certificates[0].s3_key_certificate)
+        : null,
+      workbook_url: updatedCourse.workbookUrl
+        ? getS3Url(updatedCourse.workbookUrl)
         : null,
     };
 

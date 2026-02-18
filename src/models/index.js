@@ -39,6 +39,12 @@ const PostComment = require("./PostComment");
 const PostLike = require("./PostLike");
 const NotificationToken = require("./NotificationToken");
 const Notifications = require("./Notifications");
+const Certification = require("./Certification");
+const CertificationModule = require("./CertificationModule");
+const EvaluationScore = require("./EvaluationScore");
+const ModuleCriterion = require("./ModuleCriterion");
+const ModuleEvaluation = require("./ModuleEvaluation");
+const ModuleSubmission = require("./ModuleSubmission");
 // Registrar modelos
 const db = {
   sequelize,
@@ -78,6 +84,12 @@ const db = {
   PostMedia,
   NotificationToken,
   Notifications,
+  Certification,
+  CertificationModule,
+  EvaluationScore,
+  ModuleCriterion,
+  ModuleEvaluation,
+  ModuleSubmission,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -251,6 +263,78 @@ PostComment.hasMany(PostMedia, {
   as: "media",
 });
 //notificaciones
+//certificaciones
+Certification.hasMany(CertificationModule, {
+  foreignKey: "certificationId",
+  as: "modules",
+  onDelete: "CASCADE",
+});
+//cetificationModule
+CertificationModule.belongsTo(Certification, {
+  foreignKey: "certificationId",
+  as: "certification",
+});
+
+CertificationModule.hasMany(ModuleCriterion, {
+  foreignKey: "moduleId",
+  as: "criteria",
+  onDelete: "CASCADE",
+});
+
+CertificationModule.hasMany(ModuleSubmission, {
+  foreignKey: "moduleId",
+  as: "submissions",
+  onDelete: "CASCADE",
+});
+
+//moduleCriterion
+ModuleCriterion.belongsTo(CertificationModule, {
+  foreignKey: "moduleId",
+  as: "module",
+});
+//moduleSUbmission
+ModuleSubmission.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+ModuleSubmission.belongsTo(CertificationModule, {
+  foreignKey: "moduleId",
+  as: "module",
+});
+
+ModuleSubmission.hasOne(ModuleEvaluation, {
+  foreignKey: "submissionId",
+  as: "evaluation",
+});
+
+//moduleEvaluation
+ModuleEvaluation.belongsTo(ModuleSubmission, {
+  foreignKey: "submissionId",
+  as: "submission",
+});
+
+ModuleEvaluation.belongsTo(User, {
+  foreignKey: "teacherId",
+  as: "teacher",
+});
+
+ModuleEvaluation.hasMany(EvaluationScore, {
+  foreignKey: "evaluationId",
+  as: "scores",
+  onDelete: "CASCADE",
+});
+
+//evaluationScore
+EvaluationScore.belongsTo(ModuleEvaluation, {
+  foreignKey: "evaluationId",
+  as: "evaluation",
+});
+
+EvaluationScore.belongsTo(ModuleCriterion, {
+  foreignKey: "criterionId",
+  as: "criterion",
+});
 
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {

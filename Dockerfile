@@ -19,7 +19,8 @@ RUN npm ci --omit=dev
 
 # Copia el resto del código fuente
 COPY . .
-
+# 👇 ESTA ES LA CLAVE
+COPY certs/global-bundle.pem /certs/global-bundle.pem
 # Expone el puerto
 EXPOSE 3000
 

@@ -10,8 +10,9 @@ router.post(
   upload.fields([
     { name: "coverImage", maxCount: 1 },
     { name: "certificate", maxCount: 1 },
+    { name: "workbook", maxCount: 1 },
   ]),
-  courseController.createCourse
+  courseController.createCourse,
 );
 router.get("/", courseController.getCourses);
 router.get("/download-certificate", courseController.downloadCertificate);
@@ -26,7 +27,7 @@ router.put(
     { name: "coverImage", maxCount: 1 },
     { name: "certificate", maxCount: 1 },
   ]),
-  courseController.updateCourse
+  courseController.updateCourse,
 );
 router.delete("/:id", courseController.deleteCourse);
 

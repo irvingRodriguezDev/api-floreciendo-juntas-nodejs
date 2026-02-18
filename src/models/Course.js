@@ -39,6 +39,9 @@ const Course = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    workbookUrl: {
+      type: DataTypes.STRING,
+    },
     publishedAt: {
       type: DataTypes.DATE,
       allowNull: true,
@@ -62,7 +65,7 @@ const Course = sequelize.define(
   {
     tableName: "courses",
     timestamps: true,
-  }
+  },
 );
 
 Course.associate = (models) => {
