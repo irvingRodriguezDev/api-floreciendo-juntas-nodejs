@@ -26,6 +26,7 @@ router.put(
   upload.fields([
     { name: "coverImage", maxCount: 1 },
     { name: "certificate", maxCount: 1 },
+    { name: "workbook", maxCount: 1 },
   ]),
   courseController.updateCourse,
 );

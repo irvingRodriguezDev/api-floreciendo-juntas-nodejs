@@ -4,6 +4,7 @@ const {
   ModuleSubmission,
   CertificationModule,
   Certification,
+  User,
 } = require("../models");
 
 const CreateSubmission = async (req, res) => {
@@ -158,7 +159,71 @@ const GetMySubmissions = async (req, res) => {
   }
 };
 
+const GetAllSubmissionSubmitted = async (req, res) => {
+  try {
+    const submissions = await ModuleSubmission.findAll({
+      where: { status: "submitted" },
+      include: [
+        {
+          model: CertificationModule,
+          as: "module",
+          attributes: ["id", "title", "certificationId"],
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "id", "phone"],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    return res.json(submissions);
+  } catch (error) {
+    return res.status(500).json({ error: error, message: "ocurrio un error" });
+  }
+};
+
+const GetAllSubmissionReviewed = async (req, res) => {
+  try {
+    const submissions = await ModuleSubmission.findAll({
+      where: { status: "reviewed" },
+      include: [
+        {
+          model: CertificationModule,
+          as: "module",
+          attributes: ["id", "title"],
+          include: {
+            model: Certification,
+            as: "certification",
+            attributes: ["id", "name"],
+          },
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name", "email", "id", "phone"],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+      order: [["createdAt", "DESC"]],
+    });
+    const formatted = submissions.map((s) => ({
+      ...s.toJSON(),
+      photo1: getS3Url(s.photo_1),
+      photo2: getS3Url(s.photo_2),
+      photo3: getS3Url(s.photo_3),
+    }));
+
+    return res.json(formatted);
+  } catch (error) {
+    return res.status(500).json({ error: error, message: "ocurrio un error" });
+  }
+};
+
 module.exports = {
   CreateSubmission,
   GetMySubmissions,
+  GetAllSubmissionSubmitted,
+  GetAllSubmissionReviewed,
 };

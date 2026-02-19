@@ -484,7 +484,7 @@ const getCourseById = async (req, res) => {
         : null,
 
       // 🔥 AQUÍ agregamos el workbook
-      workbook_url: course.workbookUrl ? getS3Url(course.workbookUrl) : null,
+      workbookUrl: course.workbookUrl ? getS3Url(course.workbookUrl) : null,
     };
 
     return res.status(200).json(formattedCourse);
@@ -550,7 +550,6 @@ const updateCourse = async (req, res) => {
         s3_key_certificate: "",
         is_active: true,
       });
-      await Course.update({ hasCertificate: true });
 
       const certificateKey = await uploadToS3(
         "certificates",
@@ -559,6 +558,7 @@ const updateCourse = async (req, res) => {
       );
 
       await certificateRecord.update({ s3_key_certificate: certificateKey });
+      await course.update({ hasCertificate: true });
     }
     if (workbookFile) {
       const workbookKey = await uploadToS3(
