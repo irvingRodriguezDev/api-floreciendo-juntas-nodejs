@@ -6,9 +6,16 @@ const {
   ModuleSubmission,
   ModuleEvaluation,
   EvaluationScore,
+  User,
 } = require("../models");
+const fs = require("fs");
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+const fontkit = require("@pdf-lib/fontkit");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
+const path = require("path");
+const sharp = require("sharp");
+
 const CreateCertification = async (req, res) => {
   try {
     const {
@@ -20,12 +27,18 @@ const CreateCertification = async (req, res) => {
       is_active,
     } = req.body;
 
-    const file = req.file;
+    const imageFile = req.files?.image?.[0];
+    const certificateFile = req.files?.certificate?.[0];
 
     // 🔎 Validar archivo
-    if (!file) {
+    if (!imageFile) {
       return res.status(400).json({
         message: "La imagen es requerida",
+      });
+    }
+    if (!certificateFile) {
+      return res.status(400).json({
+        message: "El certificado es requerido",
       });
     }
 
@@ -50,18 +63,25 @@ const CreateCertification = async (req, res) => {
     // 2️⃣ Subir imagen a S3 usando el ID recién creado
     const imagePath = await uploadToS3(
       "certifications",
-      file,
+      imageFile,
+      certification.id,
+    );
+    const certificatePath = await uploadToS3(
+      "certifications/certificate",
+      certificateFile,
       certification.id,
     );
 
     // 3️⃣ Guardar solo el path en DB
     certification.image = imagePath;
+    certification.certificate = certificatePath;
     await certification.save();
 
     // 4️⃣ Preparar respuesta con URL pública
     const certificationResponse = {
       ...certification.toJSON(),
       image: getS3Url(imagePath),
+      certificate: getS3Url(certificatePath),
     };
 
     return res.status(201).json(certificationResponse);
@@ -105,7 +125,11 @@ const GetCertificationById = async (req, res) => {
       return res.status(404).json({ message: "No encontrada" });
     }
 
-    return res.json({ certification, image: getS3Url(certification.image) });
+    return res.json({
+      certification,
+      image: getS3Url(certification.image),
+      certificate: getS3Url(certification.certificate),
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -300,10 +324,13 @@ const GetMyCertificationDetail = async (req, res) => {
     return res.json({
       id: certification.id,
       name: certification.name,
+      image: certification ? getS3Url(certification.image) : null,
+      certificate: certification ? getS3Url(certification.certificate) : null,
       start_date: certification.start_date,
       end_date: certification.end_date,
       min_passing_score: certification.min_passing_score,
       total_points: totalPoints,
+      total_modules: certification.modules.length,
       evaluated_modules: evaluatedModules,
       modules: modulesFormatted,
     });
@@ -313,6 +340,134 @@ const GetMyCertificationDetail = async (req, res) => {
     });
   }
 };
+const downloadCertificate = async (req, res) => {
+  try {
+    const { certificationId } = req.query;
+    const userId = req.user.id;
+
+    // ================================
+    // 🔎 Buscar usuario
+    // ================================
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    const userName = user.name;
+
+    // ================================
+    // 🔎 Buscar certificado
+    // ================================
+    const certificado = await Certification.findOne({
+      where: { id: certificationId },
+    });
+
+    if (!certificado) {
+      return res.status(404).json({ message: "Certificado no encontrado" });
+    }
+
+    const { certificate } = certificado;
+
+    // ================================
+    // 📥 Descargar PDF base
+    // ================================
+    const pdfUrl = getS3Url(certificate);
+    const existingPdfBytes = await fetch(pdfUrl).then((r) => r.arrayBuffer());
+
+    const pdfDoc = await PDFDocument.load(existingPdfBytes);
+
+    // 🔥 NECESARIO para fuentes personalizadas
+    pdfDoc.registerFontkit(fontkit);
+
+    const page = pdfDoc.getPages()[0];
+    const { width, height } = page.getSize();
+
+    // ================================
+    // 🎨 Fuente Cursiva
+    // ================================
+    const fontPath = path.join(__dirname, "../fonts/Ephesis-Regular.ttf");
+
+    const fontBytes = fs.readFileSync(fontPath);
+    const customFont = await pdfDoc.embedFont(fontBytes);
+
+    const textSize = 150;
+
+    const textWidth = customFont.widthOfTextAtSize(userName, textSize);
+
+    const xCentered = (width - 1800) / 2;
+    const yPosition = 1950;
+
+    page.drawText(userName, {
+      x: xCentered,
+      y: yPosition,
+      size: textSize,
+      font: customFont,
+      color: rgb(0.0, 0.0, 0.0),
+    });
+
+    const makeOvalImage = async (imageBuffer, width, height) => {
+      const svgMask = `
+    <svg width="${width}" height="${height}">
+      <ellipse cx="${width / 2}" cy="${height / 2}" rx="${width / 2}" ry="${height / 2}" fill="white"/>
+    </svg>
+  `;
+
+      const ovalImage = await sharp(imageBuffer)
+        .resize(width, height)
+        .composite([
+          {
+            input: Buffer.from(svgMask),
+            blend: "dest-in",
+          },
+        ])
+        .png()
+        .toBuffer();
+
+      return ovalImage;
+    };
+    // ================================
+    // 🖼 Imagen Oval Real con Clip
+    // ================================
+    if (user.profileImage) {
+      const imageUrl = getS3Url(user.profileImage);
+      const originalBuffer = await fetch(imageUrl).then((r) => r.arrayBuffer());
+
+      const ovalBuffer = await makeOvalImage(
+        Buffer.from(originalBuffer),
+        500,
+        650,
+      );
+
+      const embeddedImage = await pdfDoc.embedPng(ovalBuffer);
+
+      const posX = width - 750;
+      const posY = 2150;
+
+      page.drawImage(embeddedImage, {
+        x: posX,
+        y: posY,
+        width: 500,
+        height: 650,
+      });
+    }
+
+    // ================================
+    // 💾 Guardar PDF
+    // ================================
+    const pdfBytes = await pdfDoc.save();
+
+    const fileName = `certificado_${user.name.replace(/ /g, "_")}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    res.send(Buffer.from(pdfBytes));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error generando certificado" });
+  }
+};
 
 module.exports = {
   GetActiveCertifications,
@@ -320,4 +475,5 @@ module.exports = {
   CreateCertification,
   GetMyCertificationDetail,
   GetModuleCertificationById,
+  downloadCertificate,
 };
