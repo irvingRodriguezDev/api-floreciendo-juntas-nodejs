@@ -9,6 +9,8 @@ const { validationResult } = require("express-validator");
 const socketModule = require("../socket");
 const sequelize = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
+const convertImageIfNeeded = require("../helpers/convertImages");
+const deleteFromS3 = require("../helpers/deleteFromS3");
 
 // Registro
 // Registro normal (usuario final)
@@ -381,13 +383,18 @@ const uploadProfileImage = async (req, res) => {
   const errors = validationResult(req);
 
   if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+    return res.status(400).json({
+      ok: false,
+      msg: "Errores de validación.",
+      errors: errors.array(),
+    });
   }
 
   if (!req.file) {
-    return res
-      .status(400)
-      .json({ msg: "No se ha proporcionado ningún archivo." });
+    return res.status(400).json({
+      ok: false,
+      msg: "Debe seleccionar una imagen.",
+    });
   }
 
   try {
@@ -396,19 +403,56 @@ const uploadProfileImage = async (req, res) => {
     const user = await User.findByPk(userId);
 
     if (!user) {
-      return res.status(404).json({ msg: "Usuario no encontrado." });
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado.",
+      });
     }
 
-    // Subir el archivo a S3
-    const file = req.file;
-    const s3Key = await uploadToS3("profileImages", file, userId);
+    // 🔒 Validar que sea imagen
+    if (!req.file.mimetype.startsWith("image/")) {
+      return res.status(400).json({
+        ok: false,
+        msg: "El archivo debe ser una imagen válida (JPG, PNG, WEBP, HEIC).",
+      });
+    }
 
-    // Guardar la referencia en el modelo User
-    user.profileImage = s3Key;
+    // 🔥 Convertir si es necesario usando TU helper
+    const processedFile = await convertImageIfNeeded(req.file);
+
+    // 🔥 Generar key versionado (evita cache CDN)
+    const newKey = `${userId}-${Date.now()}`;
+
+    // Subir a S3
+    const uploadedKey = await uploadToS3(
+      "/profileImages",
+      processedFile,
+      newKey,
+    );
+
+    if (!uploadedKey) {
+      return res.status(500).json({
+        ok: false,
+        msg: "No se pudo subir la imagen. Intente nuevamente.",
+      });
+    }
+
+    const oldImageKey = user.profileImage;
+
+    // Actualizar BD
+    user.profileImage = uploadedKey;
     await user.save();
 
-    // Obtener la URL pública usando getS3Url
-    const publicUrl = getS3Url(user.profileImage);
+    // Intentar eliminar anterior (sin romper flujo)
+    if (oldImageKey) {
+      try {
+        await deleteFromS3(oldImageKey);
+      } catch (err) {
+        console.error("Error eliminando imagen anterior:", err);
+      }
+    }
+
+    const publicUrl = getS3Url(uploadedKey);
 
     const io = socketModule.getIO();
     io.to(`user_${userId}`).emit("profileImageUpdated", {
@@ -416,14 +460,18 @@ const uploadProfileImage = async (req, res) => {
       profileImage: publicUrl,
     });
 
-    res.json({
-      msg: "Imagen de perfil subida exitosamente",
+    return res.status(200).json({
+      ok: true,
+      msg: "Imagen de perfil actualizada correctamente.",
       profileImage: publicUrl,
-      user, // opcional: enviar datos del usuario actualizados
     });
-  } catch (err) {
-    console.error("Error al subir la imagen:", err.message);
-    res.status(500).send("Error del servidor");
+  } catch (error) {
+    console.error("Error al subir imagen:", error);
+
+    return res.status(500).json({
+      ok: false,
+      msg: error.message || "Error inesperado al subir la imagen.",
+    });
   }
 };
 
