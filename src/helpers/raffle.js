@@ -20,8 +20,8 @@ const getEligibleUsers = async () => {
       },
     ],
     where: {
-      id: {
-        [Op.ne]: 2, // 👈 excluye al usuario con id 2
+      roleId: {
+        [Op.eq]: 4, // 👈 excluye al usuario con id 2
       },
       [Op.or]: [
         { "$subscriptions.status$": "active" },
