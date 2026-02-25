@@ -148,7 +148,6 @@ const updateVideo = async (req, res) => {
 
         const title = "Nuevo curso disponible 🎬";
         const body = "Un nuevo curso está disponible";
-
         const url = `/detalle-curso/${video.courseId}`;
 
         // 1️⃣ Guardar notificaciones en DB
@@ -180,9 +179,9 @@ const updateVideo = async (req, res) => {
 
         if (!tokens.length) return;
 
-        // 3️⃣ Push
+        // 3️⃣ Push (NO BLOQUEANTE 🔥)
         for (const { token } of tokens) {
-          await sendPushNotification({
+          sendPushNotification({
             token,
             title,
             body,
@@ -192,7 +191,7 @@ const updateVideo = async (req, res) => {
               courseId: String(video.courseId),
               url,
             },
-          });
+          }).catch(() => {});
         }
       }
     } catch (err) {

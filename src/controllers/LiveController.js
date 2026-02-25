@@ -428,6 +428,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
     });
     // 🔔 NOTIFICACIONES LIVE INICIADO
     try {
+      // 1️⃣ Usuarios a notificar
       const usersToNotify = await User.findAll({
         where: {
           roleId: 4,
@@ -445,10 +446,10 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
 
       const url = `/detalle-live/${live.id}`;
 
-      // 1️⃣ Guardar notificaciones en DB
+      // 2️⃣ Guardar notificaciones en DB (CRÍTICO)
       const notifications = usersToNotify.map((u) => ({
         userId: u.id,
-        actorId: live.userId || null, // si el live tiene creador
+        actorId: live.userId || null,
         type: "live",
         entityId: live.id,
         title,
@@ -462,7 +463,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
 
       await Notifications.bulkCreate(notifications);
 
-      // 2️⃣ Tokens activos
+      // 3️⃣ Tokens activos
       const tokens = await NotificationToken.findAll({
         where: {
           isActive: true,
@@ -474,9 +475,9 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
 
       if (!tokens.length) return;
 
-      // 3️⃣ Push
+      // 4️⃣ Push (NO BLOQUEANTE 🔥)
       for (const { token } of tokens) {
-        await sendPushNotification({
+        sendPushNotification({
           token,
           title,
           body,
@@ -485,7 +486,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
             liveId: String(live.id),
             url,
           },
-        });
+        }).catch(() => {});
       }
     } catch (err) {
       console.error("⚠️ Error enviando notificaciones live:", err);

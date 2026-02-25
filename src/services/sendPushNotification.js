@@ -1,6 +1,9 @@
 const admin = require("../config/firebase");
+const { NotificationToken } = require("../models");
 
 const sendPushNotification = async ({ token, title, body, data = {} }) => {
+  if (!token) return { success: false, skipped: true };
+
   const message = {
     token,
     data: {
@@ -24,7 +27,11 @@ const sendPushNotification = async ({ token, title, body, data = {} }) => {
       error.code === "messaging/invalid-registration-token"
     ) {
       console.warn(`⚠️ Token inválido: ${token}`);
-      // TODO: marcar isActive=false en DB
+
+      // 🔥 DESACTIVAR TOKEN PARA NO VOLVER A INTENTAR
+      await NotificationToken.update({ isActive: false }, { where: { token } });
+
+      return { success: false, error: "TOKEN_DISABLED" };
     }
 
     console.error("❌ sendPushNotification:", error);

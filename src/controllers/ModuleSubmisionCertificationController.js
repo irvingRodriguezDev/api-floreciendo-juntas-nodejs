@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const getS3Url = require("../helpers/getS3Url");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const {
@@ -5,6 +6,8 @@ const {
   CertificationModule,
   Certification,
   User,
+  EvaluationScore,
+  ModuleEvaluation,
 } = require("../models");
 
 const CreateSubmission = async (req, res) => {
@@ -161,63 +164,233 @@ const GetMySubmissions = async (req, res) => {
 
 const GetAllSubmissionSubmitted = async (req, res) => {
   try {
-    const submissions = await ModuleSubmission.findAll({
-      where: { status: "submitted" },
+    const {
+      page = 1,
+      limit = 10,
+      search = "",
+      certificationId,
+      moduleId,
+    } = req.query;
+
+    const isSearchMode = search.trim() !== "";
+
+    // Convertir a números seguros
+    const pageNumber = parseInt(page);
+    const limitNumber = parseInt(limit);
+    const offset = (pageNumber - 1) * limitNumber;
+
+    // =============================
+    // WHERE principal
+    // =============================
+    const whereCondition = {
+      status: "submitted",
+    };
+
+    // =============================
+    // WHERE para USER (search)
+    // =============================
+    const userWhere = {};
+
+    if (isSearchMode) {
+      userWhere[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    // =============================
+    // WHERE para MODULE
+    // =============================
+    const moduleWhere = {};
+
+    if (certificationId) {
+      moduleWhere.certificationId = certificationId;
+    }
+
+    if (moduleId) {
+      moduleWhere.id = moduleId;
+    }
+
+    // =============================
+    // Query base
+    // =============================
+    const queryOptions = {
+      where: whereCondition,
       include: [
         {
           model: CertificationModule,
           as: "module",
-          attributes: ["id", "title", "certificationId"],
+          attributes: ["id", "title", "certificationId"], // SIN imágenes
+          where: Object.keys(moduleWhere).length ? moduleWhere : undefined,
         },
         {
           model: User,
           as: "user",
-          attributes: ["name", "email", "id", "phone"],
+          attributes: ["id", "name", "email", "phone"], // SIN imágenes
+          where: isSearchMode ? userWhere : undefined,
         },
       ],
       order: [["createdAt", "DESC"]],
-    });
+    };
 
-    return res.json(submissions);
+    // =============================
+    // Si NO es búsqueda → paginar
+    // =============================
+    if (!isSearchMode) {
+      queryOptions.limit = limitNumber;
+      queryOptions.offset = offset;
+
+      const { count, rows } =
+        await ModuleSubmission.findAndCountAll(queryOptions);
+
+      return res.json({
+        total: count,
+        page: pageNumber,
+        totalPages: Math.ceil(count / limitNumber),
+        data: rows,
+      });
+    }
+
+    // =============================
+    // Si es búsqueda → sin paginar
+    // =============================
+    const submissions = await ModuleSubmission.findAll(queryOptions);
+
+    return res.json({
+      total: submissions.length,
+      data: submissions,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error, message: "ocurrio un error" });
+    console.error(error);
+    return res.status(500).json({
+      message: "Ocurrió un error",
+      error: error.message,
+    });
   }
 };
 
 const GetAllSubmissionReviewed = async (req, res) => {
   try {
-    const submissions = await ModuleSubmission.findAll({
-      where: { status: "reviewed" },
+    const {
+      page = 1,
+      limit = 10,
+      search = "",
+      certificationId,
+      moduleId,
+    } = req.query;
+
+    const isSearchMode = search.trim() !== "";
+
+    const pageNumber = parseInt(page);
+    const limitNumber = parseInt(limit);
+    const offset = (pageNumber - 1) * limitNumber;
+
+    // =============================
+    // WHERE principal
+    // =============================
+    const whereCondition = {
+      status: "reviewed",
+    };
+
+    // =============================
+    // WHERE USER (search)
+    // =============================
+    const userWhere = {};
+
+    if (isSearchMode) {
+      userWhere[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+        { phone: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    // =============================
+    // WHERE MODULE
+    // =============================
+    const moduleWhere = {};
+
+    if (certificationId) {
+      moduleWhere.certificationId = certificationId;
+    }
+
+    if (moduleId) {
+      moduleWhere.id = moduleId;
+    }
+
+    const queryOptions = {
+      where: whereCondition,
       include: [
         {
           model: CertificationModule,
           as: "module",
-          attributes: ["id", "title"],
-          include: {
-            model: Certification,
-            as: "certification",
-            attributes: ["id", "name"],
-          },
+          attributes: ["id", "title", "certificationId"],
+          where: Object.keys(moduleWhere).length > 0 ? moduleWhere : undefined,
+          include: [
+            {
+              model: Certification,
+              as: "certification",
+              attributes: ["id", "name"],
+            },
+          ],
+        },
+        {
+          model: ModuleEvaluation,
+          as: "evaluation",
+          attributes: ["id", "total_score"],
         },
         {
           model: User,
           as: "user",
-          attributes: ["name", "email", "id", "phone"],
+          attributes: ["id", "name", "email", "phone"],
+          where: isSearchMode ? userWhere : undefined,
         },
       ],
       order: [["createdAt", "DESC"]],
-      order: [["createdAt", "DESC"]],
-    });
+    };
+
+    // =============================
+    // MODO PAGINADO
+    // =============================
+    if (!isSearchMode) {
+      queryOptions.limit = limitNumber;
+      queryOptions.offset = offset;
+
+      const { count, rows } =
+        await ModuleSubmission.findAndCountAll(queryOptions);
+
+      const formatted = rows.map((s) => ({
+        ...s.toJSON(),
+      }));
+
+      return res.json({
+        total: count,
+        page: pageNumber,
+        totalPages: Math.ceil(count / limitNumber),
+        data: formatted,
+      });
+    }
+
+    // =============================
+    // MODO SEARCH (sin paginar)
+    // =============================
+    const submissions = await ModuleSubmission.findAll(queryOptions);
+
     const formatted = submissions.map((s) => ({
       ...s.toJSON(),
-      photo1: getS3Url(s.photo_1),
-      photo2: getS3Url(s.photo_2),
-      photo3: getS3Url(s.photo_3),
     }));
 
-    return res.json(formatted);
+    return res.json({
+      total: formatted.length,
+      data: formatted,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error, message: "ocurrio un error" });
+    console.error(error);
+    return res.status(500).json({
+      message: "Ocurrió un error",
+      error: error.message,
+    });
   }
 };
 

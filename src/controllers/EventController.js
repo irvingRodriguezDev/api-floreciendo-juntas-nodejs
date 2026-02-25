@@ -104,6 +104,7 @@ const createEvent = async (req, res) => {
     try {
       const creatorId = req.user.id;
 
+      // 1️⃣ Usuarios a notificar
       const usersToNotify = await User.findAll({
         where: {
           roleId: 4,
@@ -119,7 +120,7 @@ const createEvent = async (req, res) => {
       const bodyNotification = `Se ha creado un nuevo evento: ${event.title}`;
       const url = `/detalle-evento/${event.id}`;
 
-      // 1️⃣ Guardar en DB
+      // 2️⃣ Guardar notificaciones en DB (lo más importante)
       const notifications = usersToNotify.map((u) => ({
         userId: u.id,
         actorId: creatorId,
@@ -136,7 +137,7 @@ const createEvent = async (req, res) => {
 
       await Notifications.bulkCreate(notifications);
 
-      // 2️⃣ Tokens activos
+      // 3️⃣ Obtener tokens activos
       const tokens = await NotificationToken.findAll({
         where: {
           isActive: true,
@@ -148,9 +149,9 @@ const createEvent = async (req, res) => {
 
       if (!tokens.length) return;
 
-      // 3️⃣ Push
+      // 4️⃣ Enviar pushes (NO BLOQUEANTE 🔥)
       for (const { token } of tokens) {
-        await sendPushNotification({
+        sendPushNotification({
           token,
           title: titleNotification,
           body: bodyNotification,
@@ -159,7 +160,7 @@ const createEvent = async (req, res) => {
             eventId: String(event.id),
             url,
           },
-        });
+        }).catch(() => {});
       }
     } catch (err) {
       console.error("⚠️ Error enviando notificaciones de evento:", err);

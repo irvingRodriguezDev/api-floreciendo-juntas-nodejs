@@ -201,6 +201,7 @@ const createPost = async (req, res) => {
     const body = `${responsePost.user.name} publicó un nuevo post`;
     const url = `/comunidad/${responsePost.id}`;
 
+    // 1️⃣ Guardar notificaciones en DB
     const notifications = usersToNotify.map((u) => ({
       userId: u.id,
       actorId: userId,
@@ -213,8 +214,11 @@ const createPost = async (req, res) => {
     }));
 
     await Notifications.bulkCreate(notifications);
+
+    // 2️⃣ Emitir por socket (igual que antes)
     notifications.forEach((n) => emitNotification(n.userId, n));
 
+    // 3️⃣ Tokens activos
     const tokens = await NotificationToken.findAll({
       where: {
         isActive: true,
@@ -224,8 +228,11 @@ const createPost = async (req, res) => {
       attributes: ["token"],
     });
 
+    if (!tokens.length) return;
+
+    // 4️⃣ Push (NO BLOQUEANTE 🔥)
     for (const { token } of tokens) {
-      await sendPushNotification({
+      sendPushNotification({
         token,
         title,
         body,
@@ -234,7 +241,7 @@ const createPost = async (req, res) => {
           postId: String(responsePost.id),
           url,
         },
-      });
+      }).catch(() => {});
     }
   } catch (err) {
     console.error("⚠️ Error notificaciones post:", err);
