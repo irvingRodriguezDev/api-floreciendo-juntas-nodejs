@@ -6,19 +6,21 @@ const {
   CertificationModule,
 } = require("../models");
 const sequelize = require("../config/db");
+const getS3Url = require("../helpers/getS3Url");
 const CreateEvaluation = async (req, res) => {
   try {
     const teacherId = req.user.id;
     const { submissionId, feedback, scores } = req.body;
 
+    // 1. Validaciones básicas de entrada
     if (!submissionId || !scores || !Array.isArray(scores)) {
       return res.status(400).json({
         message: "submissionId y scores son requeridos",
       });
     }
 
-    // ✅ Buscar submission con criteria en una sola query
-    const submission = await ModuleSubmission.findByPk(submissionId, {
+    // 2. Consulta inicial de datos (Lectura rápida sin transacción para validar existencia)
+    const submissionData = await ModuleSubmission.findByPk(submissionId, {
       attributes: ["id", "status", "moduleId"],
       include: {
         model: CertificationModule,
@@ -27,42 +29,33 @@ const CreateEvaluation = async (req, res) => {
         include: {
           model: ModuleCriterion,
           as: "criteria",
-          attributes: ["id", "maxScore"],
+          attributes: ["id", "max_score"],
         },
       },
     });
 
-    if (!submission) {
+    if (!submissionData) {
       return res.status(404).json({ message: "Submission no encontrada" });
     }
 
-    if (submission.status === "evaluated") {
-      return res.status(400).json({ message: "Esta entrega ya fue evaluada" });
-    }
-
-    const criteria = submission.module.criteria;
-
+    const criteria = submissionData.module.criteria;
     if (scores.length !== criteria.length) {
       return res
         .status(400)
         .json({ message: "Debes evaluar todos los criterios" });
     }
 
-    // ✅ Validar todos los scores ANTES de tocar la BD
+    // 3. Validar scores contra criterios
     const criteriaById = {};
-    for (const c of criteria) {
-      criteriaById[c.id] = c;
-    }
+    criteria.forEach((c) => (criteriaById[c.id] = c));
 
     for (const scoreItem of scores) {
       const criterion = criteriaById[scoreItem.criterionId];
-
       if (!criterion) {
-        return res.status(400).json({
-          message: `Criterio inválido: ${scoreItem.criterionId}`,
-        });
+        return res
+          .status(400)
+          .json({ message: `Criterio inválido: ${scoreItem.criterionId}` });
       }
-
       if (scoreItem.score > criterion.maxScore) {
         return res.status(400).json({
           message: `El score no puede ser mayor a ${criterion.maxScore}`,
@@ -72,8 +65,25 @@ const CreateEvaluation = async (req, res) => {
 
     const total = scores.reduce((sum, s) => sum + s.score, 0);
 
-    // ✅ Todo en una transacción — si algo falla, se revierte todo
+    // --- INICIO DE PROCESAMIENTO CRÍTICO ---
+    let result;
+
     await sequelize.transaction(async (t) => {
+      // 4. Bloqueo de fila (SELECT FOR UPDATE)
+      // Evita que dos profes evalúen lo mismo al mismo tiempo
+      const sub = await ModuleSubmission.findByPk(submissionId, {
+        attributes: ["id", "status"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (sub.status === "reviewed" || sub.status === "evaluated") {
+        const error = new Error("Esta entrega ya fue evaluada");
+        error.name = "CustomBusinessError";
+        throw error;
+      }
+
+      // 5. Crear la evaluación
       const evaluation = await ModuleEvaluation.create(
         {
           submissionId,
@@ -84,7 +94,7 @@ const CreateEvaluation = async (req, res) => {
         { transaction: t },
       );
 
-      // ✅ bulkCreate en vez de N creates secuenciales — 1 sola query
+      // 6. BulkCreate (Una sola query de inserción múltiple)
       await EvaluationScore.bulkCreate(
         scores.map((s) => ({
           evaluationId: evaluation.id,
@@ -94,18 +104,28 @@ const CreateEvaluation = async (req, res) => {
         { transaction: t },
       );
 
-      await ModuleSubmission.update(
-        { status: "reviewed" },
-        { where: { id: submissionId }, transaction: t },
-      );
+      // 7. Actualizar status
+      await sub.update({ status: "reviewed" }, { transaction: t });
+
+      result = {
+        message: "Evaluación realizada correctamente",
+        total_score: total,
+      };
     });
 
-    return res.status(201).json({
-      message: "Evaluación realizada correctamente",
-      total_score: total,
-    });
+    // 8. Respuesta fuera de la transacción (Conexión liberada)
+    return res.status(201).json(result);
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.error("❌ Error en CreateEvaluation:", error);
+
+    if (error.name === "CustomBusinessError") {
+      return res.status(400).json({ message: error.message });
+    }
+
+    return res.status(500).json({
+      message: "Error interno del servidor",
+      error: error.message,
+    });
   }
 };
 
@@ -125,13 +145,19 @@ const GetEvaluationBySubmission = async (req, res) => {
       ],
       include: [
         {
+          // 1. Incluimos la Submission para traer las fotos
+          model: ModuleSubmission,
+          as: "submission",
+          attributes: ["id", "photo_1", "photo_2", "photo_3", "status"],
+        },
+        {
           model: EvaluationScore,
           as: "scores",
           attributes: ["id", "criterionId", "score"],
           include: {
             model: ModuleCriterion,
             as: "criterion",
-            attributes: ["id", "title", "maxScore"],
+            attributes: ["id", "title", "max_score"],
           },
         },
       ],
@@ -141,11 +167,31 @@ const GetEvaluationBySubmission = async (req, res) => {
       return res.status(404).json({ message: "Evaluación no encontrada" });
     }
 
-    return res.json(evaluation);
+    // 2. Convertimos a JSON plano para manipular las URLs
+    const evaluationData = evaluation.get({ plain: true });
+
+    // 3. Procesamos las imágenes de la submission con el helper
+    if (evaluationData.submission) {
+      evaluationData.submission.photo_1_url = evaluationData.submission.photo_1
+        ? await getS3Url(evaluationData.submission.photo_1)
+        : null;
+
+      evaluationData.submission.photo_2_url = evaluationData.submission.photo_2
+        ? await getS3Url(evaluationData.submission.photo_2)
+        : null;
+
+      evaluationData.submission.photo_3_url = evaluationData.submission.photo_3
+        ? await getS3Url(evaluationData.submission.photo_3)
+        : null;
+    }
+
+    return res.json(evaluationData);
   } catch (error) {
+    console.error("❌ Error en GetEvaluationBySubmission:", error);
     return res.status(500).json({ message: error.message });
   }
 };
+
 module.exports = {
   CreateEvaluation,
   GetEvaluationBySubmission,

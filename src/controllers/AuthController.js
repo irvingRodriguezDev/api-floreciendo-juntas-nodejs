@@ -11,7 +11,6 @@ const sequelize = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
 const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
-const { invalidateUserCache } = require("../middlewares/authMiddleware");
 // Registro
 // Registro normal (usuario final)
 const register = async (req, res) => {
@@ -107,7 +106,6 @@ const login = async (req, res) => {
     if (sessionId) {
       tokenPayload.sessionId = sessionId;
     }
-    invalidateUserCache(user.id);
     const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
       expiresIn: "12h",
     });
@@ -288,7 +286,6 @@ const createUserWithRole = async (req, res) => {
 
 const logout = async (req, res) => {
   try {
-    invalidateUserCache(req.user.id);
     const token = req.header("Authorization")?.replace("Bearer ", "");
     const { browserId } = req.body;
 

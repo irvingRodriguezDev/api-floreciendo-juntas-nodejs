@@ -150,7 +150,7 @@ const GetModuleCertificationById = async (req, res) => {
     // ✅ 3 queries planas en paralelo en vez de 1 JOIN de 5 niveles
     const [module, criteria, submission] = await Promise.all([
       CertificationModule.findByPk(moduleId, {
-        attributes: ["id", "title", "description"],
+        attributes: ["id", "title"],
       }),
       ModuleCriterion.findAll({
         where: { moduleId },

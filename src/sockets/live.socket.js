@@ -17,14 +17,7 @@ module.exports = (io, socket) => {
 
       const comments = await LiveComment.findAll({
         where: { live_id: liveId },
-        attributes: [
-          "id",
-          "live_id",
-          "user_id",
-          "user_name",
-          "message",
-          "createdAt",
-        ],
+        attributes: ["id", "live_id", "user_name", "message", "createdAt"],
         order: [["createdAt", "DESC"]],
         limit: 35,
       });

@@ -38,7 +38,16 @@ const RaffleWinner = sequelize.define(
   {
     tableName: "raffle_winners",
     timestamps: true,
-  }
+    indexes: [
+      { fields: ["raffle_month"] }, // Acelera el conteo y la exclusión de ganadores
+      { fields: ["user_id"] },
+      // Índice compuesto para evitar errores de lógica (Opcional pero recomendado)
+      {
+        unique: true,
+        fields: ["user_id", "raffle_month", "prize_id"],
+      },
+    ],
+  },
 );
 
 module.exports = RaffleWinner;

@@ -18,18 +18,18 @@ const sequelize = new Sequelize(
     logging: false,
     timezone: "-06:00",
 
-    dialectOptions: {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false,
-        ca: fs.readFileSync(caPath),
-      },
-    },
+    // dialectOptions: {
+    //   ssl: {
+    //     require: true,
+    //     rejectUnauthorized: false,
+    //     ca: fs.readFileSync(caPath),
+    //   },
+    // },
 
     pool: {
-      max: 20,
-      min: 3,
-      acquire: 60000,
+      max: 50, // Más capacidad para picos de tráfico
+      min: 10, // Conexiones siempre listas
+      acquire: 60000, // Se queda igual (1 minuto)
       idle: 10000,
     },
   },

@@ -40,114 +40,118 @@ const eligibleUsers = async (req, res) => {
   }
 };
 const runRaffleOneWinner = async (req, res) => {
-  const t = await sequelize.transaction();
+  const now = new Date();
+  const currentMonth = format(now, "yyyy-MM");
+  const lastMonth = format(subMonths(now, 1), "yyyy-MM");
+
   try {
-    const currentMonth = format(new Date(), "yyyy-MM");
+    let finalResult;
 
-    // 1) Buscar el primer premio disponible (ordenado por id asc)
-    const prize = await MonthlyPrize.findOne({
-      where: { raffle_month: currentMonth, status: "available" },
-      order: [["id", "ASC"]],
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (!prize) {
-      await t.rollback();
-      return res
-        .status(400)
-        .json({ message: "No hay premios disponibles para este mes." });
-    }
-
-    // 2) Obtener usuarios elegibles (función helper)
-    let eligibleUsers = await getEligibleUsers(); // devuelve array de usuarios
-
-    if (!eligibleUsers || eligibleUsers.length === 0) {
-      await t.rollback();
-      return res
-        .status(400)
-        .json({ message: "No hay usuarios elegibles para el sorteo." });
-    }
-
-    // 3) Excluir ganador del mes anterior
-    const lastMonth = format(subMonths(new Date(), 1), "yyyy-MM");
-    const lastWinner = await RaffleWinner.findOne({
-      where: { raffle_month: lastMonth },
-      transaction: t,
-    });
-
-    if (lastWinner) {
-      eligibleUsers = eligibleUsers.filter((u) => u.id !== lastWinner.user_id);
-    }
-
-    // 4) Excluir usuarios que ya ganaron este mes (para evitar multi-ganador en mismo mes)
-    const winnersThisMonth = await RaffleWinner.findAll({
-      where: { raffle_month: currentMonth },
-      attributes: ["user_id"],
-      transaction: t,
-    });
-    const winnersThisMonthIds = winnersThisMonth.map((w) => w.user_id);
-    if (winnersThisMonthIds.length > 0) {
-      eligibleUsers = eligibleUsers.filter(
-        (u) => !winnersThisMonthIds.includes(u.id)
-      );
-    }
-
-    if (eligibleUsers.length === 0) {
-      await t.rollback();
-      return res.status(400).json({
-        message:
-          "Después de aplicar exclusiones no quedan usuarios disponibles para el sorteo.",
+    await sequelize.transaction(async (t) => {
+      // 1. OBTENER PREMIO ALEATORIO
+      // Usamos RAND() para MySQL/MariaDB o RANDOM() para PostgreSQL
+      const prize = await MonthlyPrize.findOne({
+        where: { raffle_month: currentMonth, status: "available" },
+        order: [sequelize.literal("RAND()")], // 👈 Esto hace que el premio sea al azar
+        transaction: t,
+        lock: t.LOCK.UPDATE,
       });
-    }
 
-    // 5) Elegir 1 ganador al azar
-    const randomIndex = Math.floor(Math.random() * eligibleUsers.length);
-    const winnerUser = eligibleUsers[randomIndex];
+      if (!prize) {
+        const error = new Error("No hay premios disponibles para este mes.");
+        error.name = "BusinessError";
+        throw error;
+      }
 
-    // 6) Determinar la posición del ganador (cuántos ya han ganado este mes +1)
-    const position = winnersThisMonthIds.length + 1;
+      // 2. Obtener excluidos
+      const winnersToExclude = await RaffleWinner.findAll({
+        where: { raffle_month: [currentMonth, lastMonth] },
+        attributes: ["user_id"],
+        transaction: t,
+        raw: true,
+      });
+      const excludedIds = winnersToExclude.map((w) => w.user_id);
 
-    // 7) Crear el registro del ganador y marcar el premio como 'awarded' (en la misma transacción)
-    const createdWinner = await RaffleWinner.create(
-      {
-        user_id: winnerUser.id,
-        prize_id: prize.id,
-        raffle_month: currentMonth,
-        position,
-      },
-      { transaction: t }
-    );
+      // 3. Obtener usuarios elegibles
+      let eligibleUsers = await getEligibleUsers({
+        transaction: t,
+        excludeIds: excludedIds,
+      });
 
-    await prize.update({ status: "awarded" }, { transaction: t });
+      if (!eligibleUsers || eligibleUsers.length === 0) {
+        const error = new Error(
+          "No hay usuarios elegibles tras aplicar exclusiones.",
+        );
+        error.name = "BusinessError";
+        throw error;
+      }
 
-    await t.commit();
+      // 4. Selección azarosa del ganador
+      const randomIndex = Math.floor(Math.random() * eligibleUsers.length);
+      const winnerUser = eligibleUsers[randomIndex];
 
-    // 8) Responder con info útil para la UI (ruleta/admin)
+      // 5. DOBLE VERIFICACIÓN (Guardia de seguridad)
+      // Verificamos que no haya ganado ya en este mes justo antes de insertar
+      const alreadyWon = await RaffleWinner.findOne({
+        where: { user_id: winnerUser.id, raffle_month: currentMonth },
+        transaction: t,
+      });
+
+      if (alreadyWon) {
+        const error = new Error(
+          "El usuario seleccionado ya ganó en este ciclo.",
+        );
+        error.name = "BusinessError";
+        throw error;
+      }
+
+      // 6. Determinar posición
+      const winnersCount = await RaffleWinner.count({
+        where: { raffle_month: currentMonth },
+        transaction: t,
+      });
+
+      // 7. Escritura
+      const createdWinner = await RaffleWinner.create(
+        {
+          user_id: winnerUser.id,
+          prize_id: prize.id,
+          raffle_month: currentMonth,
+          position: winnersCount + 1,
+        },
+        { transaction: t },
+      );
+
+      await prize.update({ status: "awarded" }, { transaction: t });
+
+      finalResult = {
+        winner: {
+          id: winnerUser.id,
+          name: winnerUser.name,
+          email: winnerUser.email,
+        },
+        prize: { id: prize.id, name: prize.prize_name },
+        raffle_record: createdWinner,
+      };
+    });
+
     return res.status(200).json({
-      message: "Ganador seleccionado y premio asignado correctamente",
-      winner: {
-        id: winnerUser.id,
-        name: winnerUser.name,
-        email: winnerUser.email,
-        total_points: winnerUser.total_points,
-      },
-      prize: {
-        id: prize.id,
-        name: prize.prize_name,
-      },
-      raffle_record: createdWinner,
+      message: "¡Ganador y premio seleccionados aleatoriamente!",
+      ...finalResult,
     });
   } catch (error) {
-    await t.rollback();
-    console.error(error);
-    return res.status(500).json({ error: error.message });
+    console.error("❌ Error en runRaffleOneWinner:", error);
+    if (error.name === "BusinessError") {
+      return res.status(400).json({ message: error.message });
+    }
+    return res.status(500).json({ error: "Error interno en el sorteo" });
   }
 };
 
 const obtainWinnersOfMonth = async (req, res) => {
   try {
     const { month } = req.query;
+
     const winners = await RaffleWinner.findAll({
       where: {
         raffle_month: month,

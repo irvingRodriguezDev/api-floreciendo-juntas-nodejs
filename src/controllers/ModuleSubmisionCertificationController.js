@@ -7,6 +7,7 @@ const {
   Certification,
   User,
   ModuleEvaluation,
+  ModuleCriterion,
 } = require("../models");
 
 const CreateSubmission = async (req, res) => {
@@ -251,46 +252,26 @@ const GetAllSubmissionReviewed = async (req, res) => {
     } = req.query;
 
     const isSearchMode = search.trim() !== "";
-
     const pageNumber = parseInt(page);
     const limitNumber = parseInt(limit);
     const offset = (pageNumber - 1) * limitNumber;
 
-    // =============================
-    // WHERE principal
-    // =============================
-    const whereCondition = {
-      status: "reviewed",
-    };
+    const userWhere = isSearchMode
+      ? {
+          [Op.or]: [
+            { name: { [Op.like]: `%${search}%` } },
+            { email: { [Op.like]: `%${search}%` } },
+            { phone: { [Op.like]: `%${search}%` } },
+          ],
+        }
+      : undefined;
 
-    // =============================
-    // WHERE USER (search)
-    // =============================
-    const userWhere = {};
-
-    if (isSearchMode) {
-      userWhere[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { email: { [Op.like]: `%${search}%` } },
-        { phone: { [Op.like]: `%${search}%` } },
-      ];
-    }
-
-    // =============================
-    // WHERE MODULE
-    // =============================
     const moduleWhere = {};
+    if (certificationId) moduleWhere.certificationId = certificationId;
+    if (moduleId) moduleWhere.id = moduleId;
 
-    if (certificationId) {
-      moduleWhere.certificationId = certificationId;
-    }
-
-    if (moduleId) {
-      moduleWhere.id = moduleId;
-    }
-
-    const queryOptions = {
-      where: whereCondition,
+    const options = {
+      where: { status: "reviewed" },
       include: [
         {
           model: CertificationModule,
@@ -303,62 +284,94 @@ const GetAllSubmissionReviewed = async (req, res) => {
               as: "certification",
               attributes: ["id", "name"],
             },
+            // IMPORTANTE: Traemos los criterios asociados a este módulo
+            {
+              model: ModuleCriterion,
+              as: "criteria",
+              attributes: ["max_score"],
+            },
           ],
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["id", "name", "email", "phone"],
+          where: userWhere,
         },
         {
           model: ModuleEvaluation,
           as: "evaluation",
           attributes: ["id", "total_score"],
         },
-        {
-          model: User,
-          as: "user",
-          attributes: ["id", "name", "email", "phone"],
-          where: isSearchMode ? userWhere : undefined,
-        },
       ],
       order: [["createdAt", "DESC"]],
+      distinct: true,
     };
 
-    // =============================
-    // MODO PAGINADO
-    // =============================
-    if (!isSearchMode) {
-      queryOptions.limit = limitNumber;
-      queryOptions.offset = offset;
+    // Función auxiliar para formatear y sumar
+    const formatSubmissions = (rows) => {
+      return rows.map((s) => {
+        const json = s.get({ plain: true });
 
-      const { count, rows } = await ModuleSubmission.findAndCountAll({
-        queryOptions,
-        limit: 100,
+        // 1. Extraemos los criterios que trajo Sequelize para este módulo específico
+        const criteriaList = json.module?.criteria || [];
+
+        // 2. Sumamos cada valor 'maxScore' de los criterios correspondientes
+        const totalPossible = criteriaList.reduce((sum, criterion) => {
+          return sum + (Number(criterion.max_score) || 0);
+        }, 0);
+
+        // 3. Retornamos el objeto limpio
+        return {
+          id: json.id,
+          createdAt: json.createdAt,
+          status: json.status,
+          user: {
+            id: json.user?.id,
+            name: json.user?.name,
+            email: json.user?.email,
+          },
+          module: {
+            id: json.module?.id,
+            title: json.module?.title,
+            certification_name: json.module?.certification?.name,
+          },
+          evaluation: {
+            score_obtained: json.evaluation?.total_score || 0,
+            max_score_module: totalPossible, // La suma de sus criterios
+            percentage:
+              totalPossible > 0
+                ? (
+                    ((json.evaluation?.total_score || 0) / totalPossible) *
+                    100
+                  ).toFixed(2) + "%"
+                : "0%",
+          },
+        };
       });
+    };
 
-      const formatted = rows.map((s) => ({
-        ...s.toJSON(),
-      }));
+    if (!isSearchMode) {
+      options.limit = limitNumber;
+      options.offset = offset;
+
+      const { count, rows } = await ModuleSubmission.findAndCountAll(options);
 
       return res.json({
         total: count,
         page: pageNumber,
         totalPages: Math.ceil(count / limitNumber),
-        data: formatted,
+        data: formatSubmissions(rows), // Aplicamos el formato aquí
       });
     }
 
-    // =============================
-    // MODO SEARCH (sin paginar)
-    // =============================
-    const submissions = await ModuleSubmission.findAll(queryOptions);
-
-    const formatted = submissions.map((s) => ({
-      ...s.toJSON(),
-    }));
-
+    const submissions = await ModuleSubmission.findAll(options);
     return res.json({
-      total: formatted.length,
-      data: formatted,
+      total: submissions.length,
+      data: formatSubmissions(submissions), // Y aquí
     });
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error en GetAllSubmissionReviewed:", error);
     return res.status(500).json({
       message: "Ocurrió un error",
       error: error.message,

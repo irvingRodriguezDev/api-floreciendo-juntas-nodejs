@@ -25,7 +25,7 @@ const LiveComment = sequelize.define(
   {
     paranoid: true,
     timestamps: true,
-  }
+  },
 );
 
 module.exports = LiveComment;

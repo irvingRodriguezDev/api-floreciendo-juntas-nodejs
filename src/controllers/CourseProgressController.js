@@ -1,7 +1,7 @@
 // controllers/progressController.js
 const { CourseProgress } = require("../models");
 const { addPoints } = require("../utils/addPoints");
-
+const sequelize = require("../config/db");
 const getProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
@@ -32,10 +32,12 @@ const updateProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
-
     const { secondsWatched = 0, certificate_enabled = false } = req.body;
 
-    // ✅ Todo en una sola transacción — 1 conexión para todo el flujo
+    // 1. Declaramos una variable para guardar el resultado
+    let result;
+
+    // 2. La transacción solo hace trabajo de DB
     await sequelize.transaction(async (t) => {
       let userProgress = await CourseProgress.findOne({
         where: { userId, courseId },
@@ -65,12 +67,13 @@ const updateProgress = async (req, res) => {
             t,
           );
         }
-
-        return res.json(userProgress);
+        result = userProgress;
+        return; // Terminamos el callback, permitiendo el COMMIT
       }
 
       if (userProgress.certificateEnabled) {
-        return res.json(userProgress);
+        result = userProgress;
+        return;
       }
 
       if (certificate_enabled) {
@@ -80,7 +83,6 @@ const updateProgress = async (req, res) => {
         userProgress.completedAt = new Date();
 
         await userProgress.save({ transaction: t });
-
         await addPoints(
           userId,
           10,
@@ -91,10 +93,14 @@ const updateProgress = async (req, res) => {
         );
       }
 
-      return res.json(userProgress);
+      result = userProgress;
     });
+
+    // 3. ENVIAMOS LA RESPUESTA FUERA (Aquí la conexión ya regresó al pool)
+    return res.json(result);
   } catch (error) {
     console.error("updateProgress error:", error);
+    // Si la transacción falla, Sequelize hace ROLLBACK automáticamente aquí
     res.status(500).json({ error: "Error al actualizar el progreso" });
   }
 };

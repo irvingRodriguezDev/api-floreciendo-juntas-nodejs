@@ -32,7 +32,16 @@ const ModuleSubmission = sequelize.define(
       defaultValue: "submitted",
     },
   },
-  { tableName: "module_submissions", timestamps: true, paranoid: true },
+  {
+    tableName: "module_submissions",
+    timestamps: true,
+    paranoid: true,
+    indexes: [
+      { fields: ["userId"] },
+      { fields: ["moduleId"] },
+      { fields: ["status"] }, // Crítico para filtrar los que faltan por revisar
+    ],
+  },
 );
 
 module.exports = ModuleSubmission;
