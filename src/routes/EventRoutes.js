@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const eventController = require("../controllers/EventController");
 const { upload } = require("../middlewares/uploadCourseImage");
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 
 // Eventos
 router.post(

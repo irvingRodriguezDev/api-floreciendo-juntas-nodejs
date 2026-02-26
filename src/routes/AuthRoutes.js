@@ -10,7 +10,7 @@ const {
   uploadProfileImage,
   updateInfoUser,
 } = require("../controllers/AuthController");
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
 const { upload } = require("../middlewares/uploadCourseImage");
 

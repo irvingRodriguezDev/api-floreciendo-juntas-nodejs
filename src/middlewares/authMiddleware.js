@@ -1,7 +1,42 @@
-// middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { isBlacklisted } = require("../utils/tokenBlacklist");
+
+// ✅ Cache simple en memoria
+const userCache = new Map();
+const CACHE_TTL = 60000; // 60 segundos
+
+const getCachedUser = async (userId) => {
+  const cached = userCache.get(userId);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.user;
+  }
+
+  const user = await User.findByPk(userId, {
+    attributes: [
+      "id",
+      "email",
+      "name",
+      "roleId",
+      "session_id",
+      "profileImage",
+      "isSubscribed",
+      "phone",
+      "username",
+    ],
+  });
+
+  if (user) {
+    userCache.set(userId, { user, timestamp: Date.now() });
+  }
+
+  return user;
+};
+
+// ✅ Llamar esto cuando el usuario haga logout o cambie de sesión
+const invalidateUserCache = (userId) => {
+  userCache.delete(userId);
+};
 
 const authMiddleware = async (req, res, next) => {
   const token = req.header("Authorization")?.replace("Bearer ", "");
@@ -21,8 +56,8 @@ const authMiddleware = async (req, res, next) => {
     return res.status(401).json({ msg: "Token inválido o expirado" });
   }
 
-  // 🔍 Usuario
-  const user = await User.findByPk(decoded.id);
+  // ✅ Usuario desde cache — evita query a BD en cada request
+  const user = await getCachedUser(decoded.id);
   if (!user) {
     return res.status(401).json({ msg: "Usuario no válido" });
   }
@@ -41,11 +76,9 @@ const authMiddleware = async (req, res, next) => {
     }
   }
 
-  // ✅ Todo OK
   req.user = user;
   req.token = token;
-
   next();
 };
 
-module.exports = authMiddleware;
+module.exports = { authMiddleware, invalidateUserCache };

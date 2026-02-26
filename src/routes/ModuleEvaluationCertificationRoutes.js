@@ -4,8 +4,8 @@ const {
   CreateEvaluation,
   GetEvaluationBySubmission,
 } = require("../controllers/ModuleEvaluationCertificationController");
-const AuthMiddleware = require("../middlewares/authMiddleware");
-router.post("/", AuthMiddleware, CreateEvaluation);
+const { authMiddleware } = require("../middlewares/authMiddleware");
+router.post("/", authMiddleware, CreateEvaluation);
 router.get("/:submissionId", GetEvaluationBySubmission);
 
 module.exports = router;

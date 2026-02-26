@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const AddressController = require("../controllers/AddressController");
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 
 // Crear dirección
 router.post("/", authMiddleware, AddressController.createAddress);
@@ -19,7 +19,7 @@ router.delete("/:addressId", authMiddleware, AddressController.deleteAddress);
 router.post(
   "/assign/:orderId",
   authMiddleware,
-  AddressController.assignAddressToOrder
+  AddressController.assignAddressToOrder,
 );
 
 module.exports = router;

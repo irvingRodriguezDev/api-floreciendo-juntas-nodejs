@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const CartController = require("../controllers/CartController");
-const AuthMiddleware = require("../middlewares/authMiddleware");
-router.use(AuthMiddleware);
+const { authMiddleware } = require("../middlewares/authMiddleware");
+router.use(authMiddleware);
 router.post("/add", CartController.addItemToCart);
 router.post("/sync", CartController.syncCart);
 router.get("/", CartController.getUserCart);

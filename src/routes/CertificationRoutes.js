@@ -8,7 +8,7 @@ const {
   GetModuleCertificationById,
   downloadCertificate,
 } = require("../controllers/CertificationController");
-const AuthMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 const { upload } = require("../middlewares/uploadCourseImage");
 router.post(
   "/",
@@ -16,15 +16,15 @@ router.post(
     { name: "image", maxCount: 1 },
     { name: "certificate", maxCount: 1 },
   ]),
-  AuthMiddleware,
+  authMiddleware,
   CreateCertification,
 );
 router.get("/active", GetActiveCertifications);
-router.get("/download-certificate", AuthMiddleware, downloadCertificate);
-router.get("/my-progress/:id", AuthMiddleware, GetMyCertificationDetail);
+router.get("/download-certificate", authMiddleware, downloadCertificate);
+router.get("/my-progress/:id", authMiddleware, GetMyCertificationDetail);
 router.get(
   "/module/detail/:moduleId",
-  AuthMiddleware,
+  authMiddleware,
   GetModuleCertificationById,
 );
 router.get("/:id", GetCertificationById);

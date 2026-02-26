@@ -26,7 +26,18 @@ const createCourse = async (req, res) => {
       });
     }
 
-    const system = await System.findByPk(system_id);
+    // ✅ Validar archivos ANTES de tocar la BD
+    const imageFile = req.files?.coverImage?.[0];
+    const certificateFile = req.files?.certificate?.[0];
+    const workbookFile = req.files?.workbook?.[0];
+
+    if (workbookFile && workbookFile.mimetype !== "application/pdf") {
+      return res.status(400).json({
+        message: "El workbook debe ser un archivo PDF",
+      });
+    }
+
+    const system = await System.findByPk(system_id, { attributes: ["id"] });
     if (!system) {
       return res
         .status(404)
@@ -35,6 +46,7 @@ const createCourse = async (req, res) => {
 
     const slug = slugify(title, { lower: true, strict: true });
 
+    // ✅ Crear curso
     const course = await Course.create({
       title,
       slug,
@@ -44,54 +56,41 @@ const createCourse = async (req, res) => {
       system_id,
     });
 
-    // Manejo de archivos
-    const imageFile = req.files?.coverImage?.[0];
-    const certificateFile = req.files?.certificate?.[0];
-    const workbookFile = req.files?.workbook?.[0];
+    // ✅ Todos los uploads en paralelo — BD ya libre desde aquí
+    const [workbookKey, imageKey, certificateKey] = await Promise.all([
+      workbookFile
+        ? uploadToS3("workbooks", workbookFile, course.id)
+        : Promise.resolve(null),
+      imageFile
+        ? uploadToS3("courses", imageFile, `img_${course.id}`)
+        : Promise.resolve(null),
+      certificateFile
+        ? uploadToS3("certificates", certificateFile, `cert_${course.id}`)
+        : Promise.resolve(null),
+    ]);
 
-    if (workbookFile) {
-      if (workbookFile.mimetype !== "application/pdf") {
-        return res.status(400).json({
-          message: "El workbook debe ser un archivo PDF",
-        });
-      }
+    // ✅ Todas las escrituras a BD en paralelo con los keys ya listos
+    await Promise.all([
+      workbookKey
+        ? course.update({ workbookUrl: workbookKey })
+        : Promise.resolve(),
+      imageKey
+        ? ImageCourses.create({
+            courseId: course.id,
+            s3_key: imageKey,
+            is_active: true,
+          })
+        : Promise.resolve(),
+      certificateKey
+        ? CertificateCourse.create({
+            courseId: course.id,
+            s3_key_certificate: certificateKey,
+            is_active: true,
+          })
+        : Promise.resolve(),
+    ]);
 
-      const workbookKey = await uploadToS3(
-        "workbooks",
-        workbookFile,
-        course.id,
-      );
-
-      await course.update({ workbookUrl: workbookKey });
-    }
-
-    if (imageFile) {
-      const imageRecord = await ImageCourses.create({
-        courseId: course.id,
-        s3_key: "",
-        is_active: true,
-      });
-
-      const imageKey = await uploadToS3("courses", imageFile, imageRecord.id);
-      await imageRecord.update({ s3_key: imageKey });
-    }
-
-    if (certificateFile) {
-      const certificateRecord = await CertificateCourse.create({
-        courseId: course.id,
-        s3_key_certificate: "",
-        is_active: true,
-      });
-
-      const certificateKey = await uploadToS3(
-        "certificates",
-        certificateFile,
-        certificateRecord.id,
-      );
-      await certificateRecord.update({ s3_key_certificate: certificateKey });
-    }
-
-    // Traer curso con imagen activa
+    // ✅ Query final solo con lo necesario
     const createdCourse = await Course.findByPk(course.id, {
       include: [
         {
@@ -99,20 +98,19 @@ const createCourse = async (req, res) => {
           as: "images",
           where: { is_active: true },
           required: false,
+          attributes: ["s3_key"],
         },
       ],
     });
 
-    const formatted = {
-      ...createdCourse.toJSON(),
-      cover_image_url: createdCourse.images?.[0]
-        ? getS3Url(createdCourse.images[0].s3_key) + `?t=${Date.now()}`
-        : null,
-    };
-
     return res.status(201).json({
       message: "Curso creado correctamente",
-      course: formatted,
+      course: {
+        ...createdCourse.toJSON(),
+        cover_image_url: createdCourse.images?.[0]
+          ? getS3Url(createdCourse.images[0].s3_key) + `?t=${Date.now()}`
+          : null,
+      },
     });
   } catch (error) {
     console.error("❌ Error al crear curso:", error);
@@ -416,7 +414,7 @@ const getTopViewedCourses = async (req, res) => {
         },
       ],
     });
-    // return res.json(topCourses);
+    // return res.json({ topCourses, message: "los cursos" });
     const formatted = topCourses.map((c) => ({
       ...c.toJSON(),
       cover_image_url: c.course ? getS3Url(c.course.images[0].s3_key) : null,
@@ -500,81 +498,94 @@ const updateCourse = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Buscar curso con imágenes y certificados
+    // ✅ Validar archivo antes de tocar la BD
+    const imageFile = req.files?.coverImage?.[0];
+    const certificateFile = req.files?.certificate?.[0];
+    const workbookFile = req.files?.workbook?.[0];
+
+    if (workbookFile && workbookFile.mimetype !== "application/pdf") {
+      return res.status(400).json({
+        message: "El workbook debe ser un archivo PDF",
+      });
+    }
+
+    // ✅ Buscar curso con solo los campos necesarios
     const course = await Course.findByPk(id, {
       include: [
-        { model: ImageCourses, as: "images" },
-        { model: CertificateCourse, as: "certificates" },
+        {
+          model: ImageCourses,
+          as: "images",
+          attributes: ["id", "s3_key", "is_active"],
+        },
+        {
+          model: CertificateCourse,
+          as: "certificates",
+          attributes: ["id", "s3_key_certificate", "is_active"],
+        },
       ],
     });
 
     if (!course) return res.status(404).json({ msg: "Curso no encontrado" });
 
-    const imageFile = req.files?.coverImage?.[0];
-    const certificateFile = req.files?.certificate?.[0];
-    const workbookFile = req.files?.workbook?.[0];
+    // ✅ Desactivar registros anteriores + uploads a S3 todo en paralelo
+    const [imageKey, certificateKey, workbookKey] = await Promise.all([
+      imageFile
+        ? Promise.all([
+            course.images?.length > 0
+              ? ImageCourses.update(
+                  { is_active: false },
+                  { where: { courseId: id } },
+                )
+              : Promise.resolve(),
+            uploadToS3("courses", imageFile, `img_${course.id}_${Date.now()}`),
+          ]).then(([, key]) => key)
+        : Promise.resolve(null),
 
-    // ✅ Subir nueva imagen si llega archivo
-    if (imageFile) {
-      // Desactivar imágenes actuales
-      if (course.images?.length > 0) {
-        await Promise.all(
-          course.images.map((img) => img.update({ is_active: false })),
-        );
-      }
+      certificateFile
+        ? Promise.all([
+            course.certificates?.length > 0
+              ? CertificateCourse.update(
+                  { is_active: false },
+                  { where: { courseId: id } },
+                )
+              : Promise.resolve(),
+            uploadToS3(
+              "certificates",
+              certificateFile,
+              `cert_${course.id}_${Date.now()}`,
+            ),
+          ]).then(([, key]) => key)
+        : Promise.resolve(null),
 
-      // Crear registro nuevo
-      const imageRecord = await ImageCourses.create({
-        courseId: course.id,
-        s3_key: "",
-        is_active: true,
-      });
+      workbookFile
+        ? uploadToS3("workbooks", workbookFile, course.id)
+        : Promise.resolve(null),
+    ]);
 
-      // Subir a S3 usando el archivo correcto
-      const imageKey = await uploadToS3("courses", imageFile, imageRecord.id);
+    // ✅ Todas las escrituras a BD en paralelo con los keys listos
+    const updatePayload = { ...req.body };
+    if (workbookKey) updatePayload.workbookUrl = workbookKey;
+    if (certificateKey) updatePayload.hasCertificate = true;
 
-      // Actualizar el registro con la key real
-      await imageRecord.update({ s3_key: imageKey });
-    }
+    await Promise.all([
+      course.update(updatePayload),
+      imageKey
+        ? ImageCourses.create({
+            courseId: course.id,
+            s3_key: imageKey,
+            is_active: true,
+          })
+        : Promise.resolve(),
+      certificateKey
+        ? CertificateCourse.create({
+            courseId: course.id,
+            s3_key_certificate: certificateKey,
+            is_active: true,
+          })
+        : Promise.resolve(),
+    ]);
 
-    // ✅ Subir nuevo certificado si llega archivo
-    if (certificateFile) {
-      // Desactivar certificados actuales
-      if (course.certificates?.length > 0) {
-        await Promise.all(
-          course.certificates.map((cert) => cert.update({ is_active: false })),
-        );
-      }
-      const certificateRecord = await CertificateCourse.create({
-        courseId: course.id,
-        s3_key_certificate: "",
-        is_active: true,
-      });
-
-      const certificateKey = await uploadToS3(
-        "certificates",
-        certificateFile,
-        certificateRecord.id,
-      );
-
-      await certificateRecord.update({ s3_key_certificate: certificateKey });
-      await course.update({ hasCertificate: true });
-    }
-    if (workbookFile) {
-      const workbookKey = await uploadToS3(
-        "workbooks",
-        workbookFile,
-        course.id,
-      );
-
-      await course.update({
-        workbookUrl: workbookKey,
-      });
-    }
-    // ✅ Actualizar otros campos del curso
-    await course.update(req.body);
-
-    // ✅ Traer curso actualizado con imagen y certificado activos
+    // ✅ Query final con attributes explícitos
     const updatedCourse = await Course.findByPk(id, {
       include: [
         {
@@ -582,17 +593,19 @@ const updateCourse = async (req, res) => {
           as: "images",
           where: { is_active: true },
           required: false,
+          attributes: ["s3_key"],
         },
         {
           model: CertificateCourse,
           as: "certificates",
           where: { is_active: true },
           required: false,
+          attributes: ["s3_key_certificate"],
         },
       ],
     });
 
-    const formatted = {
+    return res.json({
       ...updatedCourse.toJSON(),
       cover_image_url: updatedCourse.images?.[0]
         ? getS3Url(updatedCourse.images[0].s3_key)
@@ -603,9 +616,7 @@ const updateCourse = async (req, res) => {
       workbook_url: updatedCourse.workbookUrl
         ? getS3Url(updatedCourse.workbookUrl)
         : null,
-    };
-
-    return res.json(formatted);
+    });
   } catch (error) {
     console.error("❌ Error al actualizar curso:", error);
     return res.status(500).json({ msg: "Error al actualizar curso" });

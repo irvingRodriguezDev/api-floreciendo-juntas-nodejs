@@ -6,7 +6,6 @@ const {
   CertificationModule,
   Certification,
   User,
-  EvaluationScore,
   ModuleEvaluation,
 } = require("../models");
 
@@ -27,13 +26,20 @@ const CreateSubmission = async (req, res) => {
       });
     }
 
-    // 1️⃣ Buscar módulo con certificación
-    const module = await CertificationModule.findByPk(moduleId, {
-      include: {
-        model: Certification,
-        as: "certification",
-      },
-    });
+    // ✅ Buscar módulo y validar entrega previa en paralelo
+    const [module, existingSubmission] = await Promise.all([
+      CertificationModule.findByPk(moduleId, {
+        include: {
+          model: Certification,
+          as: "certification",
+          attributes: ["id", "is_active"],
+        },
+      }),
+      ModuleSubmission.findOne({
+        where: { userId, moduleId },
+        attributes: ["id"],
+      }),
+    ]);
 
     if (!module) {
       return res.status(404).json({
@@ -47,18 +53,13 @@ const CreateSubmission = async (req, res) => {
       });
     }
 
-    // 2️⃣ Validar entrega previa
-    const existingSubmission = await ModuleSubmission.findOne({
-      where: { userId, moduleId },
-    });
-
     if (existingSubmission) {
       return res.status(400).json({
         message: "Ya entregaste este módulo",
       });
     }
 
-    // 3️⃣ Crear submission base
+    // ✅ Crear submission base
     const submission = await ModuleSubmission.create({
       userId,
       moduleId,
@@ -68,52 +69,19 @@ const CreateSubmission = async (req, res) => {
       status: "submitted",
     });
 
-    // 4️⃣ Subir imágenes a S3
-    const photo1Path = await uploadToS3(
-      "evaluations",
-      req.files[0],
-      `${submission.id}_1`,
-    );
-
-    const photo2Path = await uploadToS3(
-      "evaluations",
-      req.files[1],
-      `${submission.id}_2`,
-    );
-
-    const photo3Path = await uploadToS3(
-      "evaluations",
-      req.files[2],
-      `${submission.id}_3`,
-    );
+    // ✅ Subir las 3 imágenes a S3 en paralelo
+    const [photo1Path, photo2Path, photo3Path] = await Promise.all([
+      uploadToS3("evaluations", req.files[0], `${submission.id}_1`),
+      uploadToS3("evaluations", req.files[1], `${submission.id}_2`),
+      uploadToS3("evaluations", req.files[2], `${submission.id}_3`),
+    ]);
 
     submission.photo_1 = photo1Path;
     submission.photo_2 = photo2Path;
     submission.photo_3 = photo3Path;
-
     await submission.save();
 
-    // 5️⃣ Traer certificación actualizada con módulos
-    const updatedCertification = await Certification.findByPk(
-      module.certification.id,
-      {
-        include: [
-          {
-            model: CertificationModule,
-            as: "modules",
-            include: [
-              {
-                model: ModuleSubmission,
-                as: "submissions",
-                where: { userId },
-                required: false,
-              },
-            ],
-          },
-        ],
-      },
-    );
-
+    // ✅ Respuesta limpia sin query extra innecesaria
     return res.status(201).json({
       message: "Entregable enviado correctamente",
       moduleId: submission.moduleId,
@@ -124,7 +92,6 @@ const CreateSubmission = async (req, res) => {
         photo2: getS3Url(photo2Path),
         photo3: getS3Url(photo3Path),
       },
-      certification: updatedCertification,
     });
   } catch (error) {
     console.error(error);
@@ -255,7 +222,10 @@ const GetAllSubmissionSubmitted = async (req, res) => {
     // =============================
     // Si es búsqueda → sin paginar
     // =============================
-    const submissions = await ModuleSubmission.findAll(queryOptions);
+    const submissions = await ModuleSubmission.findAll({
+      queryOptions,
+      limit: 100,
+    });
 
     return res.json({
       total: submissions.length,
@@ -357,8 +327,10 @@ const GetAllSubmissionReviewed = async (req, res) => {
       queryOptions.limit = limitNumber;
       queryOptions.offset = offset;
 
-      const { count, rows } =
-        await ModuleSubmission.findAndCountAll(queryOptions);
+      const { count, rows } = await ModuleSubmission.findAndCountAll({
+        queryOptions,
+        limit: 100,
+      });
 
       const formatted = rows.map((s) => ({
         ...s.toJSON(),

@@ -147,47 +147,46 @@ const GetModuleCertificationById = async (req, res) => {
       });
     }
 
-    // 🔎 Buscar módulo con todo incluido
-    const module = await CertificationModule.findByPk(moduleId, {
-      include: [
-        {
-          model: ModuleCriterion,
-          as: "criteria",
-        },
-        {
-          model: ModuleSubmission,
-          as: "submissions",
-          where: { userId },
-          required: false,
-          include: [
-            {
-              model: ModuleEvaluation,
-              as: "evaluation",
-              include: [
-                {
-                  model: EvaluationScore,
-                  as: "scores",
-                  include: [
-                    {
-                      model: ModuleCriterion,
-                      as: "criterion",
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    });
+    // ✅ 3 queries planas en paralelo en vez de 1 JOIN de 5 niveles
+    const [module, criteria, submission] = await Promise.all([
+      CertificationModule.findByPk(moduleId, {
+        attributes: ["id", "title", "description"],
+      }),
+      ModuleCriterion.findAll({
+        where: { moduleId },
+        attributes: ["id", "title", "max_score"],
+      }),
+      ModuleSubmission.findOne({
+        where: { moduleId, userId },
+        attributes: ["id", "createdAt", "photo_1", "photo_2", "photo_3"],
+        include: [
+          {
+            model: ModuleEvaluation,
+            as: "evaluation",
+            attributes: [
+              "id",
+              "submissionId",
+              "teacherId",
+              "general_feedback",
+              "createdAt",
+            ],
+            include: [
+              {
+                model: EvaluationScore,
+                as: "scores",
+                attributes: ["id", "criterionId", "score"],
+              },
+            ],
+          },
+        ],
+      }),
+    ]);
 
     if (!module) {
       return res.status(404).json({
         message: "Módulo no encontrado",
       });
     }
-
-    const submission = module.submissions[0] || null;
 
     let status = "not_started";
     let formattedSubmission = null;
@@ -209,13 +208,22 @@ const GetModuleCertificationById = async (req, res) => {
 
         const evaluation = submission.evaluation;
 
-        const scoresFormatted = evaluation.scores.map((s) => ({
-          id: s.id,
-          criterionId: s.criterionId,
-          criterionTitle: s.criterion?.title || null,
-          score: s.score,
-          max_score: s.criterion?.max_score || 5,
-        }));
+        // ✅ Index de criteria por id para O(1) en vez de buscar en cada score
+        const criteriaById = {};
+        for (const c of criteria) {
+          criteriaById[c.id] = c;
+        }
+
+        const scoresFormatted = evaluation.scores.map((s) => {
+          const criterion = criteriaById[s.criterionId] || null;
+          return {
+            id: s.id,
+            criterionId: s.criterionId,
+            criterionTitle: criterion?.title || null,
+            score: s.score,
+            max_score: criterion?.max_score || 5,
+          };
+        });
 
         const totalScore = scoresFormatted.reduce((sum, s) => sum + s.score, 0);
 
@@ -236,7 +244,7 @@ const GetModuleCertificationById = async (req, res) => {
       title: module.title,
       description: module.description,
       status,
-      criteria: module.criteria,
+      criteria,
       submission: formattedSubmission,
       evaluation: formattedEvaluation,
     });
@@ -258,35 +266,35 @@ const GetMyCertificationDetail = async (req, res) => {
       });
     }
 
-    const certification = await Certification.findByPk(id, {
-      include: [
-        {
-          model: CertificationModule,
-          as: "modules",
-          include: [
-            {
-              model: ModuleSubmission,
-              as: "submissions",
-              where: { userId },
-              required: false,
-              include: [
-                {
-                  model: ModuleEvaluation,
-                  as: "evaluation",
-                  include: [
-                    {
-                      model: EvaluationScore,
-                      as: "scores",
-                      attributes: ["score"],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    });
+    // ✅ Separamos en 2 queries planas en paralelo
+    // en vez de 1 query con 4 niveles de JOIN
+    const [certification, submissions] = await Promise.all([
+      Certification.findByPk(id, {
+        include: [
+          {
+            model: CertificationModule,
+            as: "modules",
+            attributes: ["id", "title"],
+          },
+        ],
+      }),
+      ModuleSubmission.findAll({
+        where: { userId },
+        include: [
+          {
+            model: ModuleEvaluation,
+            as: "evaluation",
+            include: [
+              {
+                model: EvaluationScore,
+                as: "scores",
+                attributes: ["score"],
+              },
+            ],
+          },
+        ],
+      }),
+    ]);
 
     if (!certification) {
       return res.status(404).json({
@@ -294,22 +302,25 @@ const GetMyCertificationDetail = async (req, res) => {
       });
     }
 
+    // ✅ Indexamos submissions por moduleId para O(1) en el map
+    const submissionByModuleId = {};
+    for (const sub of submissions) {
+      submissionByModuleId[sub.moduleId] = sub;
+    }
+
     let totalPoints = 0;
     let evaluatedModules = 0;
 
     const modulesFormatted = certification.modules.map((module) => {
-      const submission = module.submissions[0] || null;
-
+      const submission = submissionByModuleId[module.id] || null;
       let moduleScore = 0;
 
       if (submission?.evaluation) {
         evaluatedModules++;
-
         moduleScore = submission.evaluation.scores.reduce(
           (sum, s) => sum + s.score,
           0,
         );
-
         totalPoints += moduleScore;
       }
 
@@ -324,8 +335,8 @@ const GetMyCertificationDetail = async (req, res) => {
     return res.json({
       id: certification.id,
       name: certification.name,
-      image: certification ? getS3Url(certification.image) : null,
-      certificate: certification ? getS3Url(certification.certificate) : null,
+      image: getS3Url(certification.image),
+      certificate: getS3Url(certification.certificate),
       start_date: certification.start_date,
       end_date: certification.end_date,
       min_passing_score: certification.min_passing_score,
@@ -346,55 +357,53 @@ const downloadCertificate = async (req, res) => {
     const userId = req.user.id;
 
     // ================================
-    // 🔎 Buscar usuario
+    // 🔎 Buscar datos en BD en paralelo
     // ================================
-    const user = await User.findByPk(userId);
+    const [user, certificado] = await Promise.all([
+      User.findByPk(userId),
+      Certification.findOne({ where: { id: certificationId } }),
+    ]);
 
     if (!user) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
-    const userName = user.name;
-
-    // ================================
-    // 🔎 Buscar certificado
-    // ================================
-    const certificado = await Certification.findOne({
-      where: { id: certificationId },
-    });
-
     if (!certificado) {
       return res.status(404).json({ message: "Certificado no encontrado" });
     }
 
-    const { certificate } = certificado;
+    // ✅ BD ya no se necesita a partir de aquí
+    const userName = user.name;
+    const pdfUrl = getS3Url(certificado.certificate);
+    const imageUrl = user.profileImage ? getS3Url(user.profileImage) : null;
 
     // ================================
-    // 📥 Descargar PDF base
+    // 📥 Descargar PDF e imagen en paralelo
     // ================================
-    const pdfUrl = getS3Url(certificate);
-    const existingPdfBytes = await fetch(pdfUrl).then((r) => r.arrayBuffer());
+    const [existingPdfBytes, originalBuffer] = await Promise.all([
+      fetch(pdfUrl).then((r) => r.arrayBuffer()),
+      imageUrl
+        ? fetch(imageUrl).then((r) => r.arrayBuffer())
+        : Promise.resolve(null),
+    ]);
 
+    // ================================
+    // 📄 Cargar y editar PDF
+    // ================================
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
-
-    // 🔥 NECESARIO para fuentes personalizadas
     pdfDoc.registerFontkit(fontkit);
 
     const page = pdfDoc.getPages()[0];
     const { width, height } = page.getSize();
 
     // ================================
-    // 🎨 Fuente Cursiva
+    // 🎨 Fuente cursiva
     // ================================
     const fontPath = path.join(__dirname, "../fonts/Ephesis-Regular.ttf");
-
     const fontBytes = fs.readFileSync(fontPath);
     const customFont = await pdfDoc.embedFont(fontBytes);
 
     const textSize = 150;
-
-    const textWidth = customFont.widthOfTextAtSize(userName, textSize);
-
     const xCentered = (width - 1800) / 2;
     const yPosition = 1950;
 
@@ -406,62 +415,47 @@ const downloadCertificate = async (req, res) => {
       color: rgb(0.0, 0.0, 0.0),
     });
 
-    const makeOvalImage = async (imageBuffer, width, height) => {
-      const svgMask = `
-    <svg width="${width}" height="${height}">
-      <ellipse cx="${width / 2}" cy="${height / 2}" rx="${width / 2}" ry="${height / 2}" fill="white"/>
-    </svg>
-  `;
-
-      const ovalImage = await sharp(imageBuffer)
-        .resize(width, height)
-        .composite([
-          {
-            input: Buffer.from(svgMask),
-            blend: "dest-in",
-          },
-        ])
-        .png()
-        .toBuffer();
-
-      return ovalImage;
-    };
     // ================================
-    // 🖼 Imagen Oval Real con Clip
+    // 🖼 Imagen oval (solo si existe)
     // ================================
-    if (user.profileImage) {
-      const imageUrl = getS3Url(user.profileImage);
-      const originalBuffer = await fetch(imageUrl).then((r) => r.arrayBuffer());
+    if (originalBuffer) {
+      const makeOvalImage = async (imageBuffer, w, h) => {
+        const svgMask = `
+          <svg width="${w}" height="${h}">
+            <ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="white"/>
+          </svg>
+        `;
+
+        return await sharp(imageBuffer)
+          .resize(w, h)
+          .composite([{ input: Buffer.from(svgMask), blend: "dest-in" }])
+          .png()
+          .toBuffer();
+      };
 
       const ovalBuffer = await makeOvalImage(
         Buffer.from(originalBuffer),
         500,
         650,
       );
-
       const embeddedImage = await pdfDoc.embedPng(ovalBuffer);
 
-      const posX = width - 750;
-      const posY = 2150;
-
       page.drawImage(embeddedImage, {
-        x: posX,
-        y: posY,
+        x: width - 750,
+        y: 2150,
         width: 500,
         height: 650,
       });
     }
 
     // ================================
-    // 💾 Guardar PDF
+    // 💾 Enviar PDF
     // ================================
     const pdfBytes = await pdfDoc.save();
-
-    const fileName = `certificado_${user.name.replace(/ /g, "_")}.pdf`;
+    const fileName = `certificado_${userName.replace(/ /g, "_")}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
     console.error(error);

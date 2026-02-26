@@ -1,5 +1,5 @@
 const express = require("express");
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 const router = express.Router();
 const usrCtrl = require("../controllers/admin/UserController");
 const prizeCtrl = require("../controllers/admin/MontlhyPrizeController");
@@ -8,7 +8,7 @@ router.get("/user-eligible", authMiddleware, usrCtrl.eligibleUsers);
 router.get(
   "/user-winners-current-month",
   authMiddleware,
-  usrCtrl.obtainWinnersOfMonth
+  usrCtrl.obtainWinnersOfMonth,
 );
 router.get("/run-raffle", authMiddleware, usrCtrl.runRaffleOneWinner);
 router.post("/create-prize", authMiddleware, prizeCtrl.createPrize);

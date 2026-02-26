@@ -3,7 +3,7 @@ const {
   countCoursesCompletedByUser,
   getCompletedCoursesWithImages,
 } = require("../controllers/UserController");
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 
 const router = express.Router();
 router.get("/coursesCompleted", authMiddleware, countCoursesCompletedByUser);

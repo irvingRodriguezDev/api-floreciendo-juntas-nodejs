@@ -261,16 +261,8 @@ const getFeed = async (req, res) => {
     const whereCondition = hasSearch
       ? {
           [Op.or]: [
-            {
-              content: {
-                [Op.like]: `%${search}%`,
-              },
-            },
-            {
-              title: {
-                [Op.like]: `%${search}%`,
-              },
-            },
+            { content: { [Op.like]: `%${search}%` } },
+            { title: { [Op.like]: `%${search}%` } },
           ],
         }
       : {};
@@ -286,20 +278,23 @@ const getFeed = async (req, res) => {
           attributes: ["id", "name", "profileImage"],
         },
         {
+          // ✅ Sin separate:true — se resuelve en el JOIN principal
           model: PostMedia,
           as: "media",
-          separate: true,
           order: [["order", "ASC"]],
         },
         {
           model: PostComment,
           as: "comments",
-          attributes: ["id", "content", "createdAt"],
+          attributes: ["id", "content", "createdAt", "userId"],
+          // ✅ Limitar comentarios por post
+          limit: 10,
+          order: [["createdAt", "DESC"]],
           include: [
             {
+              // ✅ Sin separate:true
               model: PostMedia,
               as: "media",
-              separate: true,
               order: [["order", "ASC"]],
             },
             {
@@ -317,7 +312,6 @@ const getFeed = async (req, res) => {
       ],
     };
 
-    // 📌 Solo paginar si NO hay búsqueda
     if (!hasSearch) {
       queryOptions.limit = limit;
       queryOptions.offset = offset;
@@ -337,12 +331,10 @@ const getFeed = async (req, res) => {
             ? getS3Url(postJson.user.profileImage)
             : null,
         },
-
         media: (postJson.media || []).map((m) => ({
           ...m,
           url: getS3Url(m.url),
         })),
-
         comments: (postJson.comments || []).map((comment) => ({
           ...comment,
           user: {
@@ -356,7 +348,6 @@ const getFeed = async (req, res) => {
             url: getS3Url(m.url),
           })),
         })),
-
         commentsCount: postJson.comments?.length || 0,
         likesCount: postJson.likes?.length || 0,
       };
@@ -365,8 +356,6 @@ const getFeed = async (req, res) => {
     res.json({
       success: true,
       data: posts,
-
-      // 📊 Solo enviar paginación si NO hay búsqueda
       ...(hasSearch
         ? {}
         : {
@@ -391,9 +380,13 @@ const toggleLike = async (req, res) => {
     const { id: postId } = req.params;
     const userId = req.user.id;
 
-    // Buscamos usuario y post (Podrías optimizar pidiendo solo los atributos necesarios)
-    const user = await User.findByPk(userId, { attributes: ["id", "name"] });
-    const post = await Post.findByPk(postId);
+    // ✅ req.user ya tiene el nombre — no necesitamos query extra
+    const userName = req.user.name;
+
+    const post = await Post.findByPk(postId, {
+      attributes: ["id", "userId"],
+      transaction: t,
+    });
 
     if (!post) {
       await t.rollback();
@@ -413,30 +406,22 @@ const toggleLike = async (req, res) => {
       liked = false;
     } else {
       await PostLike.create({ postId, userId }, { transaction: t });
-      // Sumar puntos
       await addPoints(userId, 10, "reaction", postId, "Reaccionó a un post", t);
       liked = true;
     }
 
     await t.commit();
 
-    // 🔌 SOCKET CORREGIDO
     const io = getIO();
-    // Enviamos el userId para que el frontend pueda decir:
-    // "Si el userId de este socket soy yo, no hago nada porque ya lo hice optimista"
     io.emit("postLikeToggled", {
-      postId: Number(postId), // Aseguramos que sea número
+      postId: Number(postId),
       userId,
       liked,
     });
 
-    // Respondemos rápido al cliente
     res.json({ success: true, liked });
 
-    // 🔔 NOTIFICACIONES (Lógica asíncrona fuera del res.json)
     if (liked && post.userId !== userId) {
-      // Usamos un proceso separado (setImmediate o simplemente no esperar con await el bloque completo)
-      // para que la respuesta al usuario sea instantánea.
       setImmediate(async () => {
         try {
           const notification = await Notifications.create({
@@ -444,7 +429,7 @@ const toggleLike = async (req, res) => {
             actorId: userId,
             type: "like",
             title: "Nueva reacción ❤️",
-            body: `${user.name} reaccionó a tu publicación`,
+            body: `${userName} reaccionó a tu publicación`,
             url: `/comunidad/${postId}`,
             data: { postId },
           });
@@ -453,6 +438,7 @@ const toggleLike = async (req, res) => {
 
           const tokens = await NotificationToken.findAll({
             where: { isActive: true, device: { [Op.ne]: "safari" } },
+            attributes: ["token"],
             include: [
               {
                 model: User,
@@ -463,19 +449,21 @@ const toggleLike = async (req, res) => {
             ],
           });
 
-          for (const tokenRow of tokens) {
-            sendPushNotification({
-              // Quitamos el await aquí para que sea paralelo
-              token: tokenRow.token,
-              title: "Han reaccionado a tu publicación",
-              body: `${user.name} reaccionó a tu publicación`,
-              data: {
-                type: "like",
-                postId: String(postId),
-                url: `/comunidad/${postId}`,
-              },
-            }).catch((e) => console.error("Push error:", e));
-          }
+          // ✅ Push notifications en paralelo
+          await Promise.all(
+            tokens.map((tokenRow) =>
+              sendPushNotification({
+                token: tokenRow.token,
+                title: "Han reaccionado a tu publicación",
+                body: `${userName} reaccionó a tu publicación`,
+                data: {
+                  type: "like",
+                  postId: String(postId),
+                  url: `/comunidad/${postId}`,
+                },
+              }).catch((e) => console.error("Push error:", e)),
+            ),
+          );
         } catch (err) {
           console.error("❌ Error notificación like:", err);
         }
@@ -489,88 +477,105 @@ const toggleLike = async (req, res) => {
 };
 
 const addComment = async (req, res) => {
-  const t = await sequelize.transaction();
   const userId = req.user.id;
   const postId = req.params.id;
-
   const uploadedFiles = [];
   let commentId = null;
 
   try {
-    const user = await User.findByPk(userId);
-    const post = await Post.findByPk(postId);
-
-    if (!post) {
-      throw new Error("Post no encontrado");
-    }
-
-    const { content } = req.body;
+    // ✅ Validar archivos ANTES de tocar la BD
     const files = req.files || [];
-
-    // ✅ Validar archivos
     for (const file of files) {
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-        throw new Error(`Formato no soportado: ${file.originalname}`);
+        return res
+          .status(400)
+          .json({ message: `Formato no soportado: ${file.originalname}` });
       }
     }
 
-    // 1️⃣ Crear comentario
-    const comment = await PostComment.create(
-      { postId, userId, content },
-      { transaction: t },
-    );
+    const { content } = req.body;
 
-    commentId = comment.id;
+    // ✅ Buscar user y post en paralelo ANTES de la transacción
+    const [user, post] = await Promise.all([
+      User.findByPk(userId, { attributes: ["id", "name", "profileImage"] }),
+      Post.findByPk(postId, { attributes: ["id", "userId"] }),
+    ]);
 
-    // 2️⃣ Puntos
-    await addPoints(
-      userId,
-      20,
-      "comment_created",
-      commentId,
-      "Comentó un post",
-      t,
-    );
+    if (!post) {
+      return res.status(404).json({ message: "Post no encontrado" });
+    }
 
-    // 3️⃣ Media
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isVideo = file.mimetype.startsWith("video");
-      const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
-
-      const media = await PostMedia.create(
-        {
-          modelType: "comment",
-          modelId: commentId,
-          type: isVideo ? "video" : "image",
-          order: i,
-          url: "UPLOADING",
-        },
+    // ✅ Transacción solo para las escrituras
+    const fullComment = await sequelize.transaction(async (t) => {
+      const comment = await PostComment.create(
+        { postId, userId, content },
         { transaction: t },
       );
 
-      const finalPath = await uploadToS3("comment-media", mediaFile, media.id);
-      uploadedFiles.push(finalPath);
+      commentId = comment.id;
 
-      await media.update({ url: finalPath }, { transaction: t });
-    }
+      // ✅ addPoints dentro de la transacción
+      await addPoints(
+        userId,
+        20,
+        "comment_created",
+        commentId,
+        "Comentó un post",
+        t,
+      );
 
-    await t.commit();
+      // ✅ Media — uploads en paralelo
+      if (files.length > 0) {
+        const mediaRecords = await PostMedia.bulkCreate(
+          files.map((file, i) => ({
+            modelType: "comment",
+            modelId: commentId,
+            type: file.mimetype.startsWith("video") ? "video" : "image",
+            order: i,
+            url: "UPLOADING",
+          })),
+          { transaction: t },
+        );
 
-    // 4️⃣ Comentario completo
-    const fullComment = await PostComment.findByPk(commentId, {
-      include: [
-        {
-          model: User,
-          as: "user",
-          attributes: ["id", "name", "profileImage"],
-        },
-        {
-          model: PostMedia,
-          as: "media",
-          order: [["order", "ASC"]],
-        },
-      ],
+        // ✅ Procesar y subir todos los archivos en paralelo
+        const uploadResults = await Promise.all(
+          files.map(async (file, i) => {
+            const isVideo = file.mimetype.startsWith("video");
+            const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
+            const finalPath = await uploadToS3(
+              "comment-media",
+              mediaFile,
+              mediaRecords[i].id,
+            );
+            uploadedFiles.push(finalPath);
+            return { record: mediaRecords[i], finalPath };
+          }),
+        );
+
+        // ✅ Actualizar urls en paralelo
+        await Promise.all(
+          uploadResults.map(({ record, finalPath }) =>
+            record.update({ url: finalPath }, { transaction: t }),
+          ),
+        );
+      }
+
+      // ✅ Query final dentro de la transacción
+      return await PostComment.findByPk(commentId, {
+        transaction: t,
+        include: [
+          {
+            model: User,
+            as: "user",
+            attributes: ["id", "name", "profileImage"],
+          },
+          {
+            model: PostMedia,
+            as: "media",
+            order: [["order", "ASC"]],
+          },
+        ],
+      });
     });
 
     const response = {
@@ -587,7 +592,9 @@ const addComment = async (req, res) => {
       })),
     };
 
-    // 5️⃣ WebSocket
+    // ✅ Responder al usuario ANTES de procesar notificaciones
+    res.json({ success: true, data: response });
+
     const io = getIO();
     io.emit("createCommentPostCommunity", {
       postId,
@@ -595,12 +602,9 @@ const addComment = async (req, res) => {
       userId,
     });
 
-    res.json({ success: true, data: response });
-
-    // 🔔 NOTIFICACIÓN
+    // ✅ Notificaciones fuera de la transacción y sin bloquear respuesta
     if (post.userId !== userId) {
       try {
-        // 6️⃣ Guardar en DB
         const notification = await Notifications.create({
           userId: post.userId,
           actorId: userId,
@@ -608,50 +612,50 @@ const addComment = async (req, res) => {
           title: "Nuevo comentario 💬",
           body: `${user.name} comentó tu publicación`,
           url: `/comunidad/${postId}`,
-          data: {
-            postId,
-            commentId,
-          },
+          data: { postId, commentId },
         });
+
         emitNotification(post.userId, notification);
-        // 7️⃣ Tokens
+
         const tokens = await NotificationToken.findAll({
           where: {
             userId: post.userId,
             isActive: true,
             device: { [Op.ne]: "safari" },
           },
+          attributes: ["token"],
         });
 
-        // 8️⃣ Push
-        for (const tokenRow of tokens) {
-          await sendPushNotification({
-            token: tokenRow.token,
-            title: "Han comentado tu publicación 💬",
-            body: `${user.name} comentó tu post`,
-            data: {
-              type: "comment",
-              postId: String(postId),
-              commentId: String(commentId),
-              url: `/comunidad/${postId}`,
-            },
-          });
-        }
+        // ✅ Todas las push notifications en paralelo
+        await Promise.all(
+          tokens.map((tokenRow) =>
+            sendPushNotification({
+              token: tokenRow.token,
+              title: "Han comentado tu publicación 💬",
+              body: `${user.name} comentó tu post`,
+              data: {
+                type: "comment",
+                postId: String(postId),
+                commentId: String(commentId),
+                url: `/comunidad/${postId}`,
+              },
+            }).catch((err) => console.error("⚠️ Push error:", err)),
+          ),
+        );
       } catch (err) {
         console.error("⚠️ Error enviando notificación comentario:", err);
       }
     }
   } catch (error) {
-    if (!t.finished) await t.rollback();
-
     for (const key of uploadedFiles) {
       try {
         await deleteFromS3(key);
       } catch {}
     }
-
     console.error("❌ addComment error:", error);
-    res.status(500).json({ message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ message: error.message });
+    }
   }
 };
 
@@ -677,7 +681,7 @@ const ShowOnePostById = async (req, res) => {
         {
           model: PostComment,
           as: "comments",
-          attributes: ["id", "content", "createdAt"],
+          attributes: ["id", "content", "createdAt", "userId"],
           order: [["createdAt", "ASC"]], // 🔥 importante
           include: [
             {

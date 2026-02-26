@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authMiddleware } = require("../middlewares/authMiddleware");
 const OrderController = require("../controllers/OrderController");
 const OrderPdfController = require("../controllers/OrderPdfController");
 router.use(authMiddleware);
@@ -9,11 +9,11 @@ router.post("/create", OrderController.createOrderFromCart);
 router.get("/user/:userId", OrderController.getUserOrders);
 router.get(
   "/:orderId/account-statement",
-  OrderPdfController.generateOrderAccountStatement
+  OrderPdfController.generateOrderAccountStatement,
 );
 router.post(
   "/assignShippingCost/:orderId",
-  OrderController.assignamentShippingCost
+  OrderController.assignamentShippingCost,
 );
 router.get("/active", OrderController.getOrdersActiveAdmin);
 router.get("/completed", OrderController.getOrdersCompletedAdmin);

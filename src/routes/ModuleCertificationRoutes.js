@@ -6,8 +6,8 @@ const {
   DeleteModule,
   GetModulesByCertification,
 } = require("../controllers/CertificationModuleController");
-const AuthMiddleware = require("../middlewares/authMiddleware");
-router.post("/", AuthMiddleware, CreateModule);
+const { authMiddleware } = require("../middlewares/authMiddleware");
+router.post("/", authMiddleware, CreateModule);
 router.get("/:certificationId", GetModulesByCertification);
 router.put("/:id", UpdateModule);
 router.delete("/:id", DeleteModule);
