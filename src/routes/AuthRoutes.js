@@ -13,12 +13,12 @@ const {
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
 const { upload } = require("../middlewares/uploadCourseImage");
-
+const verifyCaptcha = require("../middlewares/verifyCaptcha");
 const router = express.Router();
 
-router.post("/register", register); // usuario normal
-router.post("/reset-password", resetPassword); // usuario normal
-router.post("/login", login);
+router.post("/register", verifyCaptcha, register); // usuario normal
+router.post("/reset-password", verifyCaptcha, resetPassword); // usuario normal
+router.post("/login", verifyCaptcha, login);
 router.post(
   "/uploadProfileImage",
   upload.single("file"),

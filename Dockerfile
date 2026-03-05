@@ -1,44 +1,54 @@
-# --- STAGE 1: Build & Dependencies ---
-FROM node:22-alpine AS builder
+# =========================
+# 1️⃣ Builder
+# =========================
+FROM node:22-alpine3.19 AS builder
 
 WORKDIR /app
 
-# Instalamos dependencias necesarias para compilar (si hubiera nativas)
-# Alpine es muy ligero, a veces necesita build-base para ciertos paquetes
-RUN apk add --no-cache python3 make g++
+# Dependencias solo para compilar módulos nativos
+RUN apk update && apk add --no-cache \
+    python3 \
+    make \
+    g++
 
+# Copiamos manifests primero (mejor cache)
 COPY package*.json ./
 
-# Instalamos TODAS las dependencias para poder construir/preparar si fuera necesario
-# Usamos ci para asegurar versiones exactas
+# Instalamos todas las dependencias
 RUN npm ci
 
+# Copiamos el código fuente
 COPY . .
 
-# Eliminamos dependencias de desarrollo y limpiamos caché de npm para dejar solo lo vital
-RUN npm prune --production && npm cache clean --force
+# Si hay build (TS, Prisma, etc.)
+# RUN npm run build
+
+# Dejamos solo dependencias de producción
+RUN npm prune --omit=dev
 
 
-# --- STAGE 2: Production Runtime (La imagen final) ---
-FROM node:22-alpine AS runner
+# =========================
+# 2️⃣ Runner (producción)
+# =========================
+FROM node:22-alpine3.19
 
-# Instalamos solo lo mínimo para la ejecución
-RUN apk add --no-cache dumb-init ca-certificates
-
-WORKDIR /app
 ENV NODE_ENV=production
 
-# Copiamos solo los node_modules ya filtrados del stage anterior
-COPY --from=builder /app/node_modules ./node_modules
-# Copiamos el código fuente
-COPY --from=builder /app .
+RUN apk update && apk add --no-cache \
+    dumb-init \
+    ca-certificates
 
-# Aseguramos el certificado en su ruta (puedes copiarlo desde el builder si ya estaba ahí)
+WORKDIR /app
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app ./
+
+# Certificado para la base de datos
 COPY certs/global-bundle.pem /certs/global-bundle.pem
+RUN chmod 644 /certs/global-bundle.pem
 
 EXPOSE 3000
 
-USER node
-
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "src/index.js"]
+CMD ["npm", "run", "start"]

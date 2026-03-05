@@ -15,7 +15,7 @@ const CommunityComment = sequelize.define(
     },
     content: {
       type: DataTypes.TEXT,
-      allowNull: false,
+      allowNull: true,
     },
     attachments: {
       type: DataTypes.JSON, // puedes guardar URLs de imágenes o archivos subidos a S3
@@ -25,7 +25,7 @@ const CommunityComment = sequelize.define(
   {
     tableName: "community_comments",
     timestamps: true,
-  }
+  },
 );
 
 // 🔗 Asociaciones

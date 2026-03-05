@@ -25,6 +25,11 @@ const sequelize = new Sequelize(
     //     ca: fs.readFileSync(caPath),
     //   },
     // },
+    // 🛡️ Protecciones contra desconexiones (Retry)
+    retry: {
+      match: [/read ECONNRESET/, /ETIMEDOUT/, /EADDRNOTAVAIL/, /ECONNREFUSED/],
+      max: 3, // Si la red parpadea un segundo, Sequelize lo intenta de nuevo solo
+    },
 
     pool: {
       max: 50, // Más capacidad para picos de tráfico

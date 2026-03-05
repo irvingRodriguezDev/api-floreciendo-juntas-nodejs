@@ -18,6 +18,10 @@ const Subscription = sequelize.define(
       allowNull: true,
       unique: true, // Debe ser único para evitar duplicados
     },
+    stripe_customer_id: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     // ID de la Sesión de Stripe (para cualquier tipo de pago)
     stripe_checkout_session_id: {
       type: DataTypes.STRING,
@@ -49,16 +53,27 @@ const Subscription = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    last_payment_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+
+    ended_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     // Estado de la suscripción, refleja los estados de Stripe
     status: {
       type: DataTypes.ENUM(
+        "incomplete",
         "pending",
         "active",
         "trialing",
         "past_due",
         "unpaid",
         "canceled",
-        "expired"
+        "expired",
+        "incomplete_expired",
       ),
       defaultValue: "pending",
       allowNull: false,
@@ -91,7 +106,7 @@ const Subscription = sequelize.define(
     tableName: "Subscriptions",
     // Aseguramos que solo haya una suscripción activa por usuario si lo deseas
     // Aunque a veces se permite tener varias. Por ahora, no lo forzamos.
-  }
+  },
 );
 
 // Relaciones

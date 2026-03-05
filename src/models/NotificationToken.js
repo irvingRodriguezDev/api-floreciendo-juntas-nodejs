@@ -9,27 +9,24 @@ const NotificationToken = sequelize.define(
       autoIncrement: true,
       primaryKey: true,
     },
-
     userId: {
       type: DataTypes.INTEGER,
       allowNull: false,
+      references: { model: "Users", key: "id" }, // Mejora la integridad referencial
     },
-
     token: {
-      type: DataTypes.TEXT, // tokens FCM son largos
+      type: DataTypes.STRING(512), // Suficiente para FCM y permite indexación rápida
       allowNull: false,
       unique: true,
     },
-
     device: {
-      type: DataTypes.STRING, // opcional (chrome, safari, mobile, etc.)
+      type: DataTypes.STRING(100),
       allowNull: true,
     },
     browserId: {
-      type: DataTypes.STRING,
+      type: DataTypes.STRING(255),
       allowNull: false,
     },
-
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
@@ -43,6 +40,14 @@ const NotificationToken = sequelize.define(
       {
         unique: true,
         fields: ["user_id", "browser_id"],
+      },
+      {
+        // 🚀 CRÍTICO: Para el WHERE { token: [array] } del Multicast
+        fields: ["token"],
+      },
+      {
+        // 🚀 CRÍTICO: Para el SELECT de usuarios suscritos
+        fields: ["user_id", "is_active"],
       },
     ],
   },

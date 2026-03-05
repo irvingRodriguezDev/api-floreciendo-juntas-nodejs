@@ -98,113 +98,97 @@ const generatePresignedUrl = async (req, res) => {
 };
 const updateVideo = async (req, res) => {
   const videoId = req.params.videoId;
-  const { hls_url, status, jobId } = req.body;
+  const { hls_url, status } = req.body;
 
   try {
-    if (!videoId) {
-      return res
-        .status(400)
-        .json({ message: "El ID del video es obligatorio en la ruta." });
-    }
+    if (!videoId) return res.status(400).json({ message: "ID obligatorio" });
 
     const video = await CourseVideo.findByPk(videoId);
+    if (!video) return res.status(404).json({ message: "Video no encontrado" });
 
-    if (!video) {
-      console.error(`Error: Video con ID ${videoId} no encontrado.`);
-      return res
-        .status(404)
-        .json({ message: `Video con ID ${videoId} no encontrado.` });
-    }
-
-    // 🧠 Verificación: solo actualizar si está activo
     if (!video.is_active) {
-      return res.status(400).json({
-        message:
-          "Este video está marcado como inactivo y no puede actualizarse.",
-      });
+      return res.status(400).json({ message: "Video inactivo" });
     }
-    const updatePayload = {
+
+    const wasReady = video.status === "listo";
+    const isReadyNow = (status || "listo") === "listo";
+
+    // 1️⃣ Actualización rápida del video
+    await video.update({
       cloudfrontUrl: hls_url,
       status: status || "listo",
-    };
+    });
 
-    await video.update(updatePayload);
-    // 🔔 NOTIFICACIONES VIDEO LISTO
-    try {
-      // Solo notificar si el video acaba de quedar listo
-      const wasReady = video.status === "listo";
-      const isReadyNow = updatePayload.status === "listo";
+    // 2️⃣ Respuesta inmediata al Webhook (AWS o el que llame no debe esperar)
+    res.json({ message: "Video actualizado correctamente" });
 
-      if (!wasReady && isReadyNow) {
-        const usersToNotify = await User.findAll({
-          where: {
-            roleId: 4,
-            isSubscribed: true,
-          },
-          attributes: ["id"],
-        });
+    // 3️⃣ Procesamiento de notificaciones en Background 🚀
+    if (!wasReady && isReadyNow) {
+      (async () => {
+        try {
+          // Consulta optimizada con JOIN
+          const usersWithTokens = await User.findAll({
+            where: { roleId: 4, isSubscribed: true },
+            attributes: ["id"],
+            include: [
+              {
+                model: NotificationToken,
+                as: "notificationTokens",
+                where: { isActive: true, device: { [Op.ne]: "safari" } },
+                attributes: ["token"],
+                required: false,
+              },
+            ],
+          });
 
-        if (!usersToNotify.length) return;
+          if (!usersWithTokens.length) return;
 
-        const title = "Nuevo curso disponible 🎬";
-        const body = "Un nuevo curso está disponible";
-        const url = `/detalle-curso/${video.courseId}`;
+          const title = "Nuevo curso disponible 🎬";
+          const body = "¡Un nuevo video ha sido publicado!";
+          const url = `/detalle-curso/${video.courseId}`;
 
-        // 1️⃣ Guardar notificaciones en DB
-        const notifications = usersToNotify.map((u) => ({
-          userId: u.id,
-          actorId: null,
-          type: "course",
-          entityId: video.id,
-          title,
-          body,
-          url,
-          data: {
-            videoId: video.id,
-            courseId: video.courseId,
-          },
-        }));
-
-        await Notifications.bulkCreate(notifications);
-
-        // 2️⃣ Tokens activos
-        const tokens = await NotificationToken.findAll({
-          where: {
-            isActive: true,
-            userId: usersToNotify.map((u) => u.id),
-            device: { [Op.ne]: "safari" },
-          },
-          attributes: ["token"],
-        });
-
-        if (!tokens.length) return;
-
-        // 3️⃣ Push (NO BLOQUEANTE 🔥)
-        for (const { token } of tokens) {
-          sendPushNotification({
-            token,
+          // A. Historial masivo (Bulk Create)
+          const notificationEntries = usersWithTokens.map((u) => ({
+            userId: u.id,
+            actorId: null,
+            type: "course",
+            entityId: video.id,
             title,
             body,
-            data: {
-              type: "course",
-              videoId: String(video.id),
-              courseId: String(video.courseId),
-              url,
-            },
-          }).catch(() => {});
-        }
-      }
-    } catch (err) {
-      console.error("⚠️ Error enviando notificaciones de video:", err);
-    }
+            url,
+            data: { videoId: video.id, courseId: video.courseId },
+          }));
+          await Notifications.bulkCreate(notificationEntries);
 
-    return res
-      .json({ message: "El video se ha actualizado correctamente" })
-      .status(200);
+          // B. Enviar Push mediante Multicast (Bloques de 500)
+          const allTokens = usersWithTokens.flatMap((u) =>
+            (u.notificationTokens || []).map((t) => t.token),
+          );
+
+          if (allTokens.length > 0) {
+            for (let i = 0; i < allTokens.length; i += 500) {
+              const batch = allTokens.slice(i, i + 500);
+              await sendPushNotificationMulticast({
+                tokens: batch,
+                title,
+                body,
+                data: {
+                  type: "course",
+                  videoId: String(video.id),
+                  courseId: String(video.courseId),
+                  url,
+                },
+              }).catch((e) => console.error("Error batch push video:", e));
+            }
+          }
+        } catch (err) {
+          console.error("⚠️ Error notificaciones video background:", err);
+        }
+      })();
+    }
   } catch (error) {
-    return res
-      .json({ error: "Ocurrio un error al actualizar el video" })
-      .status(500);
+    console.error("❌ updateVideo error:", error);
+    if (!res.headersSent) res.status(500).json({ error: "Ocurrió un error" });
   }
 };
 const initMultipartUpload = async (req, res) => {

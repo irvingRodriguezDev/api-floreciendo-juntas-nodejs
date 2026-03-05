@@ -2,6 +2,8 @@ require("dotenv").config();
 process.env.TZ = "America/Mexico_City";
 
 const express = require("express");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const http = require("http");
 const { init } = require("./socket");
 const sequelize = require("./config/db");
@@ -10,32 +12,83 @@ const routes = require("./routes");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const webhookController = require("./controllers/WebhookController");
-const expireSubscriptionsJob = require("./jobs/expireSubscriptions");
-const releaseExpiredReservations = require("./jobs/releaseReservations");
 const socketAuth = require("./sockets/socketAuth");
 const liveSocket = require("./sockets/live.socket");
+const { initCronJobs } = require("./services/cronService");
+
+// 🛡️ Configuración de Rate Limit
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200, // Subí un poco a 200 para evitar falsos positivos en apps con mucho tráfico
+  message: { msg: "Demasiadas peticiones, intenta más tarde." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const app = express();
+
+// 🚀 REQUERIDO PARA AWS / LOAD BALANCER
+app.set("trust proxy", 1);
+
+// ==============================
+// 🛡️ Seguridad de Encabezados
+// ==============================
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "https://player.live-video.net",
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: [
+          "'self'",
+          "https://*.amazonaws.com",
+          "wss://*.amazonaws.com",
+          "https://*.ngrok-free.app",
+        ],
+        workerSrc: ["'self'", "blob:"],
+      },
+    },
+  }),
+);
+
+// ==============================
+// 🌍 CORS
+// ==============================
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === "production"
+        ? ["https://floreciendojuntas.com"]
+        : "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }),
+);
 
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
 // ==============================
-// 1️⃣ Stripe Webhooks
+// 1️⃣ Stripe Webhooks (Crudos para validación de firma)
 // ==============================
 app.post(
   "/webhooks/stripe/subscription",
   express.raw({ type: "application/json" }),
   webhookController.handleSubscriptionStripeWebhook,
 );
-
 app.post(
   "/webhooks/stripe/ticket",
   bodyParser.raw({ type: "application/json" }),
   webhookController.handleTicketStripeWebhook,
 );
-
 app.post(
   "/webhooks/stripe/order-payments",
   bodyParser.raw({ type: "application/json" }),
@@ -43,22 +96,11 @@ app.post(
 );
 
 // ==============================
-// 2️⃣ Parsers
+// 2️⃣ Parsers & General Limit
 // ==============================
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
-
-// ==============================
-// 3️⃣ CORS
-// ==============================
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  }),
-);
+app.use("/api", generalLimiter); // 👈 Protege todos los endpoints de la API
 
 // ==============================
 // 4️⃣ HTTP + Socket.IO
@@ -66,15 +108,12 @@ app.use(
 const httpServer = http.createServer(app);
 const io = init(httpServer);
 
-// 🔐 Auth middleware
 io.use(socketAuth);
 
-// 👇 registrar sockets por dominio
 io.on("connection", (socket) => {
   if (socket.user?.id) {
     socket.join(`user:${socket.user.id}`);
   }
-
   liveSocket(io, socket);
 });
 
@@ -83,34 +122,23 @@ io.on("connection", (socket) => {
 // ==============================
 app.use("/api", routes);
 
-// 404
 app.use((req, res) => {
   res.status(404).json({ msg: "Ruta no encontrada" });
 });
 
 // ==============================
-// 6️⃣ Puerto
+// 6️⃣ Puerto & Start
 // ==============================
 const PORT = process.env.PORT || 3000;
 
-// ==============================
-// 7️⃣ DB + seed + cron + server
-// ==============================
 sequelize
   .sync({ alter: false })
   .then(async () => {
     console.log("✅ Base de datos sincronizada");
-
     await seedData();
-    console.log("✅ Seed completado");
-
-    expireSubscriptionsJob.start();
-    releaseExpiredReservations.start();
-    console.log("🕒 Cron jobs iniciados");
-
+    initCronJobs();
     httpServer.listen(PORT, "0.0.0.0", () => {
-      console.log(`🌐 Servidor corriendo en http://localhost:${PORT}`);
-      console.log(`🌐 Exponer con ngrok: ngrok http ${PORT}`);
+      console.log(`🌐 Servidor corriendo en puerto ${PORT}`);
     });
   })
   .catch((err) => console.error("❌ Error DB:", err));

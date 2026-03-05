@@ -44,6 +44,7 @@ const authMiddleware = async (req, res, next) => {
         "email",
         "name",
         "isSubscribed",
+        "profileImage",
       ],
       raw: true,
     });

@@ -17,7 +17,9 @@ const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const { Op } = require("sequelize");
 const { addPoints } = require("../utils/addPoints");
-const sendPushNotification = require("../services/sendPushNotification");
+const {
+  sendPushNotificationMulticast,
+} = require("../services/sendPushNotification");
 const emitNotification = require("../helpers/emitNotification");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
@@ -32,222 +34,184 @@ const ALLOWED_MIME_TYPES = [
   "video/quicktime", // .mov (iPhone)
 ];
 const createPost = async (req, res) => {
-  const t = await sequelize.transaction();
   const userId = req.user.id;
 
-  let responsePost = null;
-  const uploadedFiles = [];
+  const { title, content = "" } = req.body;
+  const files = req.files || [];
+  const uploadedFiles = []; // Para rollback de S3 si algo falla
 
   try {
-    const { title, content = "" } = req.body;
-    const files = req.files || [];
-
-    /* ======================
-       Validaciones básicas
-    ====================== */
-    if (!title || !title.trim()) {
+    /* 1. VALIDACIONES INICIALES (Rápido) */
+    if (!title?.trim())
       return res.status(400).json({ message: "El título es obligatorio" });
-    }
-
-    if (title.length > 120) {
-      return res
-        .status(400)
-        .json({ message: "El título excede el límite permitido" });
-    }
-
-    if (!content.trim()) {
+    if (!content.trim())
       return res.status(400).json({ message: "El contenido es obligatorio" });
-    }
-
-    if (content.length > 1500) {
-      return res
-        .status(400)
-        .json({ message: "El contenido es demasiado largo" });
-    }
-
-    if (files.length > 4) {
-      return res.status(400).json({ message: "Máximo 4 archivos permitidos" });
-    }
-
-    const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        return res.status(400).json({ message: "Archivo demasiado grande" });
-      }
-
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-        return res.status(400).json({
-          message: `Formato no soportado: ${file.originalname}`,
+        return res
+          .status(400)
+          .json({ message: `Formato no soportado: ${file.originalname}` });
+      }
+    }
+
+    /* 2. PROCESAMIENTO DE MEDIA (S3) ANTES DE LA DB 🔥 */
+    // Subimos a S3 primero. Si esto falla, no habremos ensuciado la DB con registros "UPLOADING"
+    const mediaToCreate = [];
+    if (files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const isVideo = file.mimetype.startsWith("video");
+        const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
+
+        // Subimos a S3 (Esto toma segundos, pero NO bloquea la base de datos)
+        const uniqueId = crypto.randomUUID();
+        const finalPath = await uploadToS3("post-media", mediaFile, uniqueId);
+        uploadedFiles.push(finalPath);
+
+        mediaToCreate.push({
+          modelType: "post",
+          type: isVideo ? "video" : "image",
+          order: i,
+          url: finalPath, // Ya tenemos la URL real
         });
       }
     }
 
-    /* ======================
-       Usuario
-    ====================== */
-    const user = await User.findByPk(userId);
-    if (!user) {
-      return res.status(404).json({ message: "Usuario no encontrado" });
-    }
-
-    /* ======================
-       Crear post
-    ====================== */
-    const post = await Post.create(
-      { userId, title: title.trim(), content: content.trim() },
-      { transaction: t },
-    );
-
-    await addPoints(userId, 30, "post_created", post.id, "Publicó un post", t);
-
-    /* ======================
-       Media
-    ====================== */
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isVideo = file.mimetype.startsWith("video");
-      const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
-
-      const media = await PostMedia.create(
-        {
-          modelId: post.id,
-          modelType: "post",
-          type: isVideo ? "video" : "image",
-          order: i,
-          url: "UPLOADING",
-        },
+    /* 3. TRANSACCIÓN DE DB (Entrar y Salir volando) ⚡ */
+    const result = await sequelize.transaction(async (t) => {
+      // A. Crear post
+      const post = await Post.create(
+        { userId, title: title.trim(), content: content.trim() },
         { transaction: t },
       );
 
-      const finalPath = await uploadToS3("post-media", mediaFile, media.id);
-      uploadedFiles.push(finalPath);
+      // B. Sumar puntos
+      await addPoints(
+        userId,
+        30,
+        "post_created",
+        post.id,
+        "Publicó un post",
+        t,
+      );
 
-      await media.update({ url: finalPath }, { transaction: t });
-    }
+      // C. Crear media con URLs reales
+      let createdMedia = [];
+      if (mediaToCreate.length > 0) {
+        const recordsWithId = mediaToCreate.map((m) => ({
+          ...m,
+          modelId: post.id,
+        }));
+        createdMedia = await PostMedia.bulkCreate(recordsWithId, {
+          transaction: t,
+          returning: true,
+        });
+      }
 
-    await t.commit();
-
-    /* ======================
-       Post completo
-    ====================== */
-    const createdPost = await Post.findByPk(post.id, {
-      include: [
-        { model: PostMedia, as: "media", order: [["order", "ASC"]] },
-        {
-          model: User,
-          as: "user",
-          attributes: ["id", "name", "profileImage"],
-        },
-      ],
+      return { post, createdMedia };
     });
 
-    const postJson = createdPost.toJSON();
+    const { post, createdMedia } = result;
 
-    responsePost = {
-      ...postJson,
+    /* 4. CONSTRUCCIÓN DE RESPUESTA FINAL */
+    const responsePost = {
+      ...post.toJSON(),
       user: {
-        ...postJson.user,
-        profileImage: postJson.user?.profileImage
-          ? getS3Url(postJson.user.profileImage)
+        id: userId,
+        name: req.user.name,
+        profileImage: req.user.profileImage
+          ? getS3Url(req.user.profileImage)
           : null,
       },
-      media: (postJson.media || []).map((m) => ({
-        ...m,
-        url: getS3Url(m.url),
+      media: createdMedia.map((m) => ({
+        ...m.toJSON(),
+        url: getS3Url(m.url), // URL Real de CloudFront/S3
       })),
     };
+    getIO().emit("postCommunityCreated", responsePost);
+    // 5. RESPUESTA AL CLIENTE (Ahora sí con todo listo)
+    res.json({
+      success: true,
+      post: responsePost,
+      message: "Post publicado exitosamente",
+    });
 
-    /* ======================
-       WebSocket
-    ====================== */
-    const io = getIO();
-    io.emit("postCommunityCreated", responsePost);
-
-    res.json({ success: true, post: responsePost });
-  } catch (error) {
-    await t.rollback();
-
-    for (const fileUrl of uploadedFiles) {
+    /* 6. PROCESOS QUE SÍ PUEDEN IR EN BACKGROUND (Notificaciones) */
+    // Esto ya no le importa al usuario esperar, pero debe ejecutarse
+    (async () => {
       try {
-        const key = fileUrl.replace(`${process.env.CLOUDFRONT_URL}/`, "");
-        await deleteFromS3(key);
+        const usersWithTokens = await User.findAll({
+          where: { roleId: 4, isSubscribed: true, id: { [Op.ne]: userId } },
+          attributes: ["id"],
+          include: [
+            {
+              model: NotificationToken,
+              as: "NotificationTokens",
+              where: { isActive: true, device: { [Op.ne]: "safari" } },
+              attributes: ["token"],
+              required: false,
+            },
+          ],
+        });
+
+        if (usersWithTokens.length > 0) {
+          const notifTitle = "Nuevo post 🌸";
+          const notifBody = `${req.user.name} publicó un nuevo post`;
+          const notifUrl = `/comunidad/${post.id}`;
+
+          // 1. Crear las notificaciones en la DB
+          const createdNotifications = await Notifications.bulkCreate(
+            usersWithTokens.map((u) => ({
+              userId: u.id,
+              actorId: userId,
+              type: "post",
+              entityId: post.id,
+              title: notifTitle,
+              body: notifBody,
+              url: notifUrl,
+              data: { postId: post.id },
+            })),
+            { returning: true }, // 💡 Importante para obtener los objetos creados
+          );
+
+          // 🔥 2. EMITIR POR SOCKET A CADA USUARIO CONECTADO
+          // Como es una comunidad, notificamos a todos los usuarios de la lista
+          createdNotifications.forEach((notif) => {
+            emitNotification(notif.userId, notif);
+          });
+
+          // 3. Recolectar tokens para Push (Firebase)
+          const allTokens = usersWithTokens.flatMap((u) =>
+            (u.NotificationTokens || []).map((t) => t.token),
+          );
+
+          if (allTokens.length > 0) {
+            for (let i = 0; i < allTokens.length; i += 500) {
+              const batch = allTokens.slice(i, i + 500);
+              await sendPushNotificationMulticast({
+                tokens: batch,
+                title: notifTitle,
+                body: notifBody,
+                data: { type: "post", postId: String(post.id), url: notifUrl },
+              }).catch(() => {});
+            }
+          }
+        }
       } catch (err) {
-        console.error("Error limpiando S3:", err);
+        console.error("❌ Error en Notificaciones Post:", err);
       }
+    })();
+  } catch (error) {
+    // ROLLBACK DE S3: Si la DB falló, borramos lo que subimos a S3 para no dejar basura
+    for (const path of uploadedFiles) {
+      await deleteFromS3(path).catch(() => {});
     }
 
-    return res.status(500).json({ message: error.message });
-  }
-
-  /* ======================
-     Notificaciones
-  ====================== */
-  try {
-    if (!responsePost?.id) return;
-
-    const usersToNotify = await User.findAll({
-      where: {
-        roleId: 4,
-        isSubscribed: true,
-        id: { [Op.ne]: userId },
-      },
-      attributes: ["id"],
-    });
-
-    if (!usersToNotify.length) return;
-
-    const title = "Nuevo post 🌸";
-    const body = `${responsePost.user.name} publicó un nuevo post`;
-    const url = `/comunidad/${responsePost.id}`;
-
-    // 1️⃣ Guardar notificaciones en DB
-    const notifications = usersToNotify.map((u) => ({
-      userId: u.id,
-      actorId: userId,
-      type: "post",
-      entityId: responsePost.id,
-      title,
-      body,
-      url,
-      data: { postId: responsePost.id },
-    }));
-
-    await Notifications.bulkCreate(notifications);
-
-    // 2️⃣ Emitir por socket (igual que antes)
-    notifications.forEach((n) => emitNotification(n.userId, n));
-
-    // 3️⃣ Tokens activos
-    const tokens = await NotificationToken.findAll({
-      where: {
-        isActive: true,
-        userId: usersToNotify.map((u) => u.id),
-        device: { [Op.ne]: "safari" },
-      },
-      attributes: ["token"],
-    });
-
-    if (!tokens.length) return;
-
-    // 4️⃣ Push (NO BLOQUEANTE 🔥)
-    for (const { token } of tokens) {
-      sendPushNotification({
-        token,
-        title,
-        body,
-        data: {
-          type: "post",
-          postId: String(responsePost.id),
-          url,
-        },
-      }).catch(() => {});
-    }
-  } catch (err) {
-    console.error("⚠️ Error notificaciones post:", err);
+    console.error("❌ Error Fatal CreatePost:", error);
+    if (!res.headersSent) res.status(500).json({ message: error.message });
   }
 };
-
 const getFeed = async (req, res) => {
   try {
     const { search } = req.query;
@@ -374,56 +338,44 @@ const getFeed = async (req, res) => {
 };
 
 const toggleLike = async (req, res) => {
-  const t = await sequelize.transaction();
+  const { id: postId } = req.params;
+  const userId = req.user.id;
+  const userName = req.user.name;
 
   try {
-    const { id: postId } = req.params;
-    const userId = req.user.id;
+    // 1. Buscamos el post rápido (sin transaction/lock)
+    const post = await Post.findByPk(postId, { attributes: ["id", "userId"] });
+    if (!post) return res.status(404).json({ message: "Post no encontrado" });
 
-    // ✅ req.user ya tiene el nombre — no necesitamos query extra
-    const userName = req.user.name;
-
-    const post = await Post.findByPk(postId, {
-      attributes: ["id", "userId"],
-      transaction: t,
-    });
-
-    if (!post) {
-      await t.rollback();
-      return res.status(404).json({ message: "Post no encontrado" });
-    }
-
-    const existing = await PostLike.findOne({
+    // 2. Intentamos borrar el like primero
+    const deletedCount = await PostLike.destroy({
       where: { postId, userId },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
     });
 
     let liked = false;
 
-    if (existing) {
-      await existing.destroy({ transaction: t });
-      liked = false;
-    } else {
-      await PostLike.create({ postId, userId }, { transaction: t });
-      await addPoints(userId, 10, "reaction", postId, "Reaccionó a un post", t);
+    if (deletedCount === 0) {
+      // Si no borró nada, es que no existía: Creamos el Like
+      await PostLike.create({ postId, userId });
+
+      // Puntos fuera de transacción principal (opcional, pero recomendado)
+      addPoints(userId, 10, "reaction", postId, "Reaccionó a un post").catch(
+        () => {},
+      );
       liked = true;
     }
 
-    await t.commit();
-
-    const io = getIO();
-    io.emit("postLikeToggled", {
-      postId: Number(postId),
-      userId,
-      liked,
-    });
-
+    // 3. Respuesta inmediata
     res.json({ success: true, liked });
 
+    // 4. WebSocket (Fuera del flujo principal)
+    getIO().emit("postLikeToggled", { postId: Number(postId), userId, liked });
+
+    // 5. Notificaciones (Solo si es Like y no es mi propio post)
     if (liked && post.userId !== userId) {
-      setImmediate(async () => {
+      (async () => {
         try {
+          // Guardar en historial (DB)
           const notification = await Notifications.create({
             userId: post.userId,
             actorId: userId,
@@ -433,46 +385,39 @@ const toggleLike = async (req, res) => {
             url: `/comunidad/${postId}`,
             data: { postId },
           });
-
           emitNotification(post.userId, notification);
-
-          const tokens = await NotificationToken.findAll({
-            where: { isActive: true, device: { [Op.ne]: "safari" } },
+          // Buscar tokens del dueño del post
+          const tokenRows = await NotificationToken.findAll({
+            where: {
+              userId: post.userId,
+              isActive: true,
+              device: { [Op.ne]: "safari" },
+            },
             attributes: ["token"],
-            include: [
-              {
-                model: User,
-                as: "user",
-                where: { id: post.userId, isSubscribed: true },
-                attributes: [],
-              },
-            ],
           });
 
-          // ✅ Push notifications en paralelo
-          await Promise.all(
-            tokens.map((tokenRow) =>
-              sendPushNotification({
-                token: tokenRow.token,
-                title: "Han reaccionado a tu publicación",
-                body: `${userName} reaccionó a tu publicación`,
-                data: {
-                  type: "like",
-                  postId: String(postId),
-                  url: `/comunidad/${postId}`,
-                },
-              }).catch((e) => console.error("Push error:", e)),
-            ),
-          );
+          if (tokenRows.length > 0) {
+            const tokens = tokenRows.map((t) => t.token);
+            // ✅ USAMOS EL NUEVO MULTICAST (Incluso si es un solo usuario, es más seguro)
+            await sendPushNotificationMulticast({
+              tokens,
+              title: "Han reaccionado a tu publicación",
+              body: `${userName} reaccionó a tu publicación`,
+              data: {
+                type: "like",
+                postId: String(postId),
+                url: `/comunidad/${postId}`,
+              },
+            });
+          }
         } catch (err) {
           console.error("❌ Error notificación like:", err);
         }
-      });
+      })();
     }
   } catch (error) {
-    if (t) await t.rollback();
     console.error("❌ toggleLike error:", error);
-    res.status(500).json({ message: error.message });
+    if (!res.headersSent) res.status(500).json({ message: error.message });
   }
 };
 
@@ -480,11 +425,12 @@ const addComment = async (req, res) => {
   const userId = req.user.id;
   const postId = req.params.id;
   const uploadedFiles = [];
-  let commentId = null;
+  const files = req.files || [];
 
   try {
-    // ✅ Validar archivos ANTES de tocar la BD
-    const files = req.files || [];
+    /* 1. VALIDACIONES Y PREPARACIÓN (Fuera de la DB) */
+    const { content } = req.body;
+
     for (const file of files) {
       if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
         return res
@@ -493,172 +439,155 @@ const addComment = async (req, res) => {
       }
     }
 
-    const { content } = req.body;
-
-    // ✅ Buscar user y post en paralelo ANTES de la transacción
     const [user, post] = await Promise.all([
       User.findByPk(userId, { attributes: ["id", "name", "profileImage"] }),
       Post.findByPk(postId, { attributes: ["id", "userId"] }),
     ]);
 
-    if (!post) {
-      return res.status(404).json({ message: "Post no encontrado" });
-    }
+    if (!post) return res.status(404).json({ message: "Post no encontrado" });
 
-    // ✅ Transacción solo para las escrituras
+    /* 2. TRABAJO PESADO (S3) ANTES DE LA TRANSACCIÓN 🔥 */
+    // Subimos todo a S3 primero. Si esto falla, la DB ni se entera.
+    const mediaToCreate = await Promise.all(
+      files.map(async (file, i) => {
+        const isVideo = file.mimetype.startsWith("video");
+        const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
+        const uniqueId = crypto.randomUUID();
+        // El tercer parámetro (id) no lo tenemos aún, así que uploadToS3 debe manejar un nombre único
+        const finalPath = await uploadToS3(
+          "comment-media",
+          mediaFile,
+          uniqueId,
+        );
+        uploadedFiles.push(finalPath);
+
+        return {
+          modelType: "comment",
+          type: isVideo ? "video" : "image",
+          order: i,
+          url: finalPath,
+        };
+      }),
+    );
+
+    /* 3. TRANSACCIÓN EXPRESS (Solo escrituras rápidas) ⚡ */
     const fullComment = await sequelize.transaction(async (t) => {
+      // Crear comentario
       const comment = await PostComment.create(
-        { postId, userId, content },
+        { postId, userId, content: content },
         { transaction: t },
       );
 
-      commentId = comment.id;
-
-      // ✅ addPoints dentro de la transacción
+      // Puntos
       await addPoints(
         userId,
         20,
         "comment_created",
-        commentId,
+        comment.id,
         "Comentó un post",
         t,
       );
 
-      // ✅ Media — uploads en paralelo
-      if (files.length > 0) {
-        const mediaRecords = await PostMedia.bulkCreate(
-          files.map((file, i) => ({
-            modelType: "comment",
-            modelId: commentId,
-            type: file.mimetype.startsWith("video") ? "video" : "image",
-            order: i,
-            url: "UPLOADING",
-          })),
-          { transaction: t },
-        );
-
-        // ✅ Procesar y subir todos los archivos en paralelo
-        const uploadResults = await Promise.all(
-          files.map(async (file, i) => {
-            const isVideo = file.mimetype.startsWith("video");
-            const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
-            const finalPath = await uploadToS3(
-              "comment-media",
-              mediaFile,
-              mediaRecords[i].id,
-            );
-            uploadedFiles.push(finalPath);
-            return { record: mediaRecords[i], finalPath };
-          }),
-        );
-
-        // ✅ Actualizar urls en paralelo
-        await Promise.all(
-          uploadResults.map(({ record, finalPath }) =>
-            record.update({ url: finalPath }, { transaction: t }),
-          ),
-        );
+      // Crear Media con URLs reales
+      let createdMedia = [];
+      if (mediaToCreate.length > 0) {
+        const mediaWithId = mediaToCreate.map((m) => ({
+          ...m,
+          modelId: comment.id,
+        }));
+        createdMedia = await PostMedia.bulkCreate(mediaWithId, {
+          transaction: t,
+          returning: true,
+        });
       }
 
-      // ✅ Query final dentro de la transacción
-      return await PostComment.findByPk(commentId, {
-        transaction: t,
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: ["id", "name", "profileImage"],
-          },
-          {
-            model: PostMedia,
-            as: "media",
-            order: [["order", "ASC"]],
-          },
-        ],
-      });
+      // Devolvemos el objeto construido manualmente para evitar OTRA query (findByPk)
+
+      // Esto ahorra aún más tiempo de conexión
+      return {
+        ...comment.get({ clone: true }),
+        user: user,
+        media: createdMedia,
+      };
     });
 
+    /* 4. FORMATEO DE RESPUESTA */
     const response = {
-      ...fullComment.toJSON(),
+      ...fullComment,
       user: {
-        ...fullComment.user.toJSON(),
-        profileImage: fullComment.user.profileImage
-          ? getS3Url(fullComment.user.profileImage)
-          : null,
+        id: user.id,
+        name: user.name,
+        profileImage: user.profileImage ? getS3Url(user.profileImage) : null,
       },
-      media: fullComment.media.map((m) => ({
-        ...m.toJSON(),
+      media: (fullComment.media || []).map((m) => ({
+        ...m.get(),
         url: getS3Url(m.url),
       })),
     };
-
-    // ✅ Responder al usuario ANTES de procesar notificaciones
-    res.json({ success: true, data: response });
-
-    const io = getIO();
-    io.emit("createCommentPostCommunity", {
+    getIO().emit("createCommentPostCommunity", {
       postId,
       comment: response,
-      userId,
+      userId, // A veces el frontend usa esto para scroll automático
     });
+    // Respuesta inmediata con todo listo
+    res.json({ success: true, data: response });
 
-    // ✅ Notificaciones fuera de la transacción y sin bloquear respuesta
-    if (post.userId !== userId) {
+    /* 5. BACKGROUND (Notificaciones y Sockets) */
+    (async () => {
       try {
-        const notification = await Notifications.create({
-          userId: post.userId,
-          actorId: userId,
-          type: "comment",
-          title: "Nuevo comentario 💬",
-          body: `${user.name} comentó tu publicación`,
-          url: `/comunidad/${postId}`,
-          data: { postId, commentId },
-        });
+        if (post.userId !== userId) {
+          const notifTitle = "Nuevo comentario 💬";
+          const notifBody = `${user.name} comentó tu publicación`;
+          const notifUrl = `/comunidad/${postId}`;
 
-        emitNotification(post.userId, notification);
-
-        const tokens = await NotificationToken.findAll({
-          where: {
+          const notification = await Notifications.create({
             userId: post.userId,
-            isActive: true,
-            device: { [Op.ne]: "safari" },
-          },
-          attributes: ["token"],
-        });
+            actorId: userId,
+            type: "comment",
+            entityId: fullComment.id,
+            title: notifTitle,
+            body: notifBody,
+            url: notifUrl,
+            data: { postId, commentId: fullComment.id },
+          });
 
-        // ✅ Todas las push notifications en paralelo
-        await Promise.all(
-          tokens.map((tokenRow) =>
-            sendPushNotification({
-              token: tokenRow.token,
+          emitNotification(post.userId, notification);
+
+          const tokens = await NotificationToken.findAll({
+            where: {
+              userId: post.userId,
+              isActive: true,
+              device: { [Op.ne]: "safari" },
+            },
+            attributes: ["token"],
+          });
+
+          if (tokens.length > 0) {
+            // Usamos Multicast en lugar de Promise.all(sendPushNotification)
+            // Es mucho más eficiente para Firebase
+            await sendPushNotificationMulticast({
+              tokens: tokens.map((t) => t.token),
               title: "Han comentado tu publicación 💬",
-              body: `${user.name} comentó tu post`,
-              data: {
-                type: "comment",
-                postId: String(postId),
-                commentId: String(commentId),
-                url: `/comunidad/${postId}`,
-              },
-            }).catch((err) => console.error("⚠️ Push error:", err)),
-          ),
-        );
+              body: notifBody,
+              data: { type: "comment", postId: String(postId), url: notifUrl },
+            }).catch((err) => console.error("⚠️ Multicast error:", err));
+          }
+        }
       } catch (err) {
-        console.error("⚠️ Error enviando notificación comentario:", err);
+        console.error("⚠️ Error background addComment:", err);
       }
-    }
+    })();
   } catch (error) {
-    for (const key of uploadedFiles) {
+    // Si algo falló en la DB, borramos los archivos que ya subimos a S3
+    for (const path of uploadedFiles) {
       try {
-        await deleteFromS3(key);
+        await deleteFromS3(path);
       } catch {}
     }
     console.error("❌ addComment error:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ message: error.message });
-    }
+    if (!res.headersSent) res.status(500).json({ message: error.message });
   }
 };
-
 const ShowOnePostById = async (req, res) => {
   try {
     const { postId } = req.params;

@@ -1,7 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User, Subscription, NotificationToken } = require("../models");
-const stripe = require("../config/stripe");
 const { addToBlacklist } = require("../utils/tokenBlacklist");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
@@ -11,86 +10,20 @@ const sequelize = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
 const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
-// Registro
-// Registro normal (usuario final)
-const register = async (req, res) => {
-  try {
-    const { password, email, name, phone, username } = req.body;
-    // Verificar si el usuario ya existe
-    const exists = await User.findOne({ where: { email } });
-    if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
 
-    // Hashear contraseña
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Crear cliente en Stripe
-    const stripeCustomer = await stripe.customers.create({
-      email,
-      name,
-      phone,
-    });
-    const sessionId = uuidv4();
-    // Crear usuario en la base de datos
-    const newUser = await User.create({
-      email,
-      name,
-      phone,
-      username,
-      password: hashedPassword,
-      roleId: 4,
-      stripe_id: stripeCustomer.id,
-      session_id: sessionId,
-    });
-
-    // Generar JWT
-    const payload = {
-      id: newUser.id,
-      email: newUser.email,
-      roleId: newUser.roleId,
-      sessionId,
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "12h",
-    });
-
-    // Responder con token
-    res.status(200).json({
-      msg: "Usuario registrado",
-      token,
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        phone: newUser.phone,
-        name: newUser.name,
-        username: newUser.username,
-        roleId: newUser.roleId,
-        stripe_id: newUser.stripe_id,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ msg: "Error en registro", error: error.message });
-  }
-};
-
-// Login
+// 1️⃣ LOGIN OPTIMIZADO (Donde fallaba la conexión)
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
     const user = await User.findOne({ where: { email } });
-    if (!user) {
-      return res.status(400).json({ msg: "Credenciales inválidas" });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(400).json({ msg: "Credenciales inválidas" });
     }
 
     let sessionId = null;
 
-    // 🔑 SOLO usuarios normales (roleId === 4)
+    // 🔑 El punto crítico: El update del sessionId ahora se beneficia del 'retry' global
     if (user.roleId === 4) {
       sessionId = uuidv4();
       await user.update({ session_id: sessionId });
@@ -99,45 +32,72 @@ const login = async (req, res) => {
     const tokenPayload = {
       id: user.id,
       email: user.email,
+      name: user.name,
       roleId: user.roleId,
+      profileImage: user.profileImage,
+      ...(sessionId && { sessionId }),
     };
 
-    // 👉 solo agregar sessionId si aplica
-    if (sessionId) {
-      tokenPayload.sessionId = sessionId;
-    }
     const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
-      expiresIn: "12h",
+      expiresIn: "24h",
     });
+
     const { password: _, ...safeUser } = user.toJSON();
-    res.json({
-      msg: "Login exitoso",
-      token,
-      user: safeUser,
-    });
+    // Normalizamos la imagen de perfil en la respuesta del login
+    safeUser.profileImage = getS3Url(safeUser.profileImage);
+
+    res.json({ msg: "Login exitoso", token, user: safeUser });
   } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({
-      message: "Error en login",
-      error: error.message,
-    });
+    console.error("Login error fatal:", error);
+    res.status(500).json({ message: "Error en login", error: error.message });
   }
 };
 
-// Perfil
-const profile = async (req, res) => {
+// 2️⃣ REGISTRO LIMPIO
+const register = async (req, res) => {
   try {
-    const user = await User.findByPk(req.user.id, {
-      attributes: ["id", "email", "name", "createdAt"],
+    const { password, email, name, phone, username } = req.body;
+
+    const exists = await User.findOne({ where: { email }, attributes: ["id"] });
+    if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const sessionId = uuidv4();
+
+    const newUser = await User.create({
+      email,
+      name,
+      phone,
+      username,
+      password: hashedPassword,
+      roleId: 4,
+      session_id: sessionId,
     });
-    res.json({ msg: "Perfil de usuario", user });
+
+    const token = jwt.sign(
+      {
+        id: newUser.id,
+        email: newUser.email,
+        roleId: newUser.roleId,
+        name: newUser.name,
+        profileImage: null,
+        sessionId,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "12h" },
+    );
+
+    res.status(200).json({
+      msg: "Usuario registrado",
+      token,
+      user: { id: newUser.id, email, name, username, roleId: 4 },
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ msg: "Error al obtener perfil", error: error.message });
+    res.status(500).json({ msg: "Error en registro", error: error.message });
   }
 };
 
+// 3️⃣ ME (Optimizado para no traer datos basura)
 const me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
@@ -156,134 +116,122 @@ const me = async (req, res) => {
         {
           model: Subscription,
           as: "Subscriptions",
-          where: { status: "active" },
           required: false,
-          // ✅ Sin limit — evita que Sequelize haga una query separada
+          limit: 1, // Solo necesitamos la última
           order: [["end_date", "DESC"]],
         },
       ],
     });
 
-    if (!user) {
-      return res.status(404).json({ msg: "Usuario no encontrado" });
-    }
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    // ✅ El limit lo manejamos en JS, no en la query
-    const activeSubscription = user.Subscriptions?.[0] ?? null;
-    const isSubscribed = activeSubscription !== null;
+    const sub = user.Subscriptions?.[0] || null;
+    const isSubscribed = sub && sub.status === "active";
 
     res.status(200).json({
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        username: user.username,
-        phone: user.phone,
-        roleId: user.roleId,
+        ...user.get({ plain: true }),
         isSubscribed,
         profileImage: getS3Url(user.profileImage),
-        member_since: user.createdAt,
-        stripe_id: user.stripe_id,
-        subscriptionDetails: isSubscribed
+        subscriptionDetails: sub
           ? {
-              type: activeSubscription.subscription_type,
-              status: activeSubscription.status,
-              startDate: activeSubscription.start_date,
-              endDate: activeSubscription.end_date,
-              nextRenewal: activeSubscription.next_renewal,
-              will_cancel_at: activeSubscription.will_cancel_at,
+              type: sub.subscription_type,
+              status: sub.status,
+              endDate: sub.end_date,
+              next_renewal: sub.next_renewal,
+              last_payment_at: sub.last_payment_at,
+              will_cancel_at: sub.will_cancel_at,
             }
           : null,
       },
     });
   } catch (error) {
-    console.error("Error en /auth/me:", error);
-    res
-      .status(500)
-      .json({ msg: "Error al obtener la información", error: error.message });
+    res.status(500).json({ msg: "Error en /me", error: error.message });
   }
 };
-//crear rol del admin
+
+// 4️⃣ CREAR USUARIO (Admin) - CORREGIDO: S3 fuera de la transacción
 const createUserWithRole = async (req, res) => {
-  const transaction = await sequelize.transaction();
+  const { name, password, roleId, email, phone, username } = req.body;
+
+  if (roleId < 2 || roleId > 5)
+    return res.status(400).json({ msg: "Rol inválido" });
+
+  const exists = await User.findOne({ where: { email }, attributes: ["id"] });
+  if (exists) return res.status(400).json({ msg: "El usuario ya existe" });
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  let newUser;
+
+  // Transacción corta solo para crear el registro
+  const t = await sequelize.transaction();
+  try {
+    newUser = await User.create(
+      { name, username, email, password: hashedPassword, roleId, phone },
+      { transaction: t },
+    );
+    await t.commit();
+  } catch (error) {
+    if (t) await t.rollback();
+    return res.status(500).json({ msg: "Error DB", error: error.message });
+  }
+
+  // S3 Fuera de la transacción para evitar bloqueos por lentitud de red
+  if (req.file) {
+    try {
+      const s3Path = await uploadToS3("profileImages", req.file, newUser.id);
+      await newUser.update({ profileImage: s3Path });
+    } catch (err) {
+      console.error("S3 Error (non-fatal for user creation):", err);
+    }
+  }
+
+  res.status(201).json({
+    message: "Usuario creado",
+    user: { ...newUser.toJSON(), profileImage: getS3Url(newUser.profileImage) },
+  });
+};
+
+// 5️⃣ SUBIR IMAGEN (Optimizado)
+const uploadProfileImage = async (req, res) => {
+  if (!req.file)
+    return res
+      .status(400)
+      .json({ ok: false, msg: "Debe seleccionar una imagen" });
 
   try {
-    const { name, password, roleId, email, phone, username } = req.body;
+    const user = await User.findByPk(req.user.id);
+    if (!user)
+      return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
 
-    // Validar rol
-    if (roleId < 2 || roleId > 5) {
-      await transaction.rollback();
-      return res
-        .status(400)
-        .json({ msg: "Solo puedes asignar roles del 2 al 5" });
-    }
-
-    // Verificar si el usuario ya existe
-    const exists = await User.findOne({ where: { email } });
-    if (exists) {
-      await transaction.rollback();
-      return res.status(400).json({ msg: "El usuario ya existe" });
-    }
-
-    // Hashear contraseña
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // 1️⃣ Crear usuario sin imagen
-    const newUser = await User.create(
-      {
-        name,
-        username,
-        email,
-        password: hashedPassword,
-        roleId,
-        phone,
-        profileImage: null,
-      },
-      { transaction },
+    // Procesar y subir (Fuera de transacciones de DB)
+    const processedFile = await convertImageIfNeeded(req.file);
+    const uploadedKey = await uploadToS3(
+      "profileImages",
+      processedFile,
+      `${user.id}-${Date.now()}`,
     );
 
-    // 2️⃣ Subir imagen si se envía
-    if (req.file) {
-      try {
-        const file = req.file;
-        const s3Path = await uploadToS3("profileImages", file, newUser.id);
-        await newUser.update({ profileImage: s3Path }, { transaction });
-      } catch (err) {
-        console.error("Error al subir imagen a S3:", err);
-        await transaction.rollback();
-        return res
-          .status(500)
-          .json({ message: "Error al subir la imagen de perfil" });
-      }
-    }
+    const oldImageKey = user.profileImage;
+    await user.update({ profileImage: uploadedKey });
 
-    // 3️⃣ Confirmar la transacción
-    await transaction.commit();
+    // Limpieza asíncrona
+    if (oldImageKey)
+      deleteFromS3(oldImageKey).catch((e) =>
+        console.error("Error delete S3:", e),
+      );
 
-    // 4️⃣ Responder al cliente
-    res.status(201).json({
-      message: "Usuario creado correctamente por el administrador",
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name,
-        username: newUser.username,
-        roleId: newUser.roleId,
-        profileImage: newUser.profileImage
-          ? getS3Url(newUser.profileImage)
-          : null,
-        phone: newUser.phone,
-      },
+    const publicUrl = getS3Url(uploadedKey);
+    socketModule.getIO().to(`user_${user.id}`).emit("profileImageUpdated", {
+      userId: user.id,
+      profileImage: publicUrl,
     });
+
+    return res.status(200).json({ ok: true, profileImage: publicUrl });
   } catch (error) {
-    console.error("❌ Error al crear usuario:", error);
-    await transaction.rollback();
-    res
-      .status(500)
-      .json({ msg: "Error al crear usuario", error: error.message });
+    return res.status(500).json({ ok: false, msg: error.message });
   }
 };
-
 const logout = async (req, res) => {
   try {
     const token = req.header("Authorization")?.replace("Bearer ", "");
@@ -293,32 +241,33 @@ const logout = async (req, res) => {
       return res.status(400).json({ msg: "Token no proporcionado" });
     }
 
-    // 🔕 Desactivar notificaciones SOLO de este navegador
-    if (browserId) {
-      await NotificationToken.update(
-        { isActive: false },
-        {
-          where: {
-            userId: req.user.id,
-            browserId,
-          },
-        },
-      );
-    }
+    // 1️⃣ Operaciones de DB (Notificaciones y Sesión)
+    // Usamos Promise.allSettled para que si falla una (ej. notificaciones),
+    // igual intente cerrar la sesión del usuario.
+    await Promise.allSettled([
+      // Desactivar token de push si existe browserId
+      browserId
+        ? NotificationToken.update(
+            { isActive: false },
+            { where: { userId: req.user.id, browserId } },
+          )
+        : Promise.resolve(),
 
-    // 🔥 Invalidar sesión única SOLO para usuarios finales
-    if (req.user.roleId === 4) {
-      await req.user.update({ session_id: null });
-    }
+      // Invalidar sesión en tabla Users (Solo para rol 4)
+      req.user.roleId === 4
+        ? User.update({ session_id: null }, { where: { id: req.user.id } })
+        : Promise.resolve(),
+    ]);
 
-    // 🔒 Invalidar token actual
+    // 2️⃣ Blacklist (Operación en memoria/Redis usualmente, muy rápida)
     addToBlacklist(token);
 
     return res.status(200).json({ msg: "Logout exitoso" });
   } catch (error) {
-    console.error("Logout error:", error);
+    console.error("Logout error fatal:", error);
+    // IMPORTANTE: Incluso si la DB falla, el cliente debe limpiar su token local
     return res.status(500).json({
-      msg: "Error en logout",
+      msg: "Error en servidor al cerrar sesión",
       error: error.message,
     });
   }
@@ -328,139 +277,38 @@ const resetPassword = async (req, res) => {
   try {
     const { email, password, passwordConfirmation } = req.body;
 
-    // Validar campos
     if (!email || !password || !passwordConfirmation) {
       return res
         .status(400)
         .json({ message: "Todos los campos son requeridos." });
     }
 
-    // Confirmar contraseñas
     if (password !== passwordConfirmation) {
       return res.status(400).json({ message: "Las contraseñas no coinciden." });
     }
 
-    // Buscar usuario
     const user = await User.findOne({ where: { email } });
-
     if (!user) {
       return res
         .status(400)
         .json({ message: "No existe una cuenta con ese correo." });
     }
 
-    // Encriptar nueva contraseña
+    // Hasheo (Operación de CPU, no de DB, segura fuera de transacciones)
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Actualizar contraseña
-    user.password = hashedPassword;
-    await user.save();
-
-    res.status(200).json({
-      message: "Contraseña restablecida correctamente.",
+    // Actualización directa
+    await user.update({
+      password: hashedPassword,
+      session_id: null, // ✨ Tip Pro: Al cambiar pass, cerramos todas las sesiones activas
     });
+
+    res.status(200).json({ message: "Contraseña restablecida correctamente." });
   } catch (error) {
     console.error("Error al restablecer contraseña:", error);
     res.status(500).json({ message: "Error interno del servidor." });
   }
 };
-//funcion para cargar la imagen de perfil
-const uploadProfileImage = async (req, res) => {
-  const errors = validationResult(req);
-
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      ok: false,
-      msg: "Errores de validación.",
-      errors: errors.array(),
-    });
-  }
-
-  if (!req.file) {
-    return res.status(400).json({
-      ok: false,
-      msg: "Debe seleccionar una imagen.",
-    });
-  }
-
-  try {
-    const userId = req.user.id;
-
-    const user = await User.findByPk(userId);
-
-    if (!user) {
-      return res.status(404).json({
-        ok: false,
-        msg: "Usuario no encontrado.",
-      });
-    }
-
-    // 🔒 Validar que sea imagen
-    if (!req.file.mimetype.startsWith("image/")) {
-      return res.status(400).json({
-        ok: false,
-        msg: "El archivo debe ser una imagen válida (JPG, PNG, WEBP, HEIC).",
-      });
-    }
-
-    // 🔥 Convertir si es necesario usando TU helper
-    const processedFile = await convertImageIfNeeded(req.file);
-
-    // 🔥 Generar key versionado (evita cache CDN)
-    const newKey = `${userId}-${Date.now()}`;
-
-    // Subir a S3
-    const uploadedKey = await uploadToS3(
-      "/profileImages",
-      processedFile,
-      newKey,
-    );
-
-    if (!uploadedKey) {
-      return res.status(500).json({
-        ok: false,
-        msg: "No se pudo subir la imagen. Intente nuevamente.",
-      });
-    }
-
-    const oldImageKey = user.profileImage;
-
-    // Actualizar BD
-    user.profileImage = uploadedKey;
-    await user.save();
-
-    // Intentar eliminar anterior (sin romper flujo)
-    if (oldImageKey) {
-      try {
-        await deleteFromS3(oldImageKey);
-      } catch (err) {
-        console.error("Error eliminando imagen anterior:", err);
-      }
-    }
-
-    const publicUrl = getS3Url(uploadedKey);
-
-    const io = socketModule.getIO();
-    io.to(`user_${userId}`).emit("profileImageUpdated", {
-      userId,
-      profileImage: publicUrl,
-    });
-
-    return res.status(200).json({
-      ok: true,
-      msg: "Imagen de perfil actualizada correctamente.",
-      profileImage: publicUrl,
-    });
-  } catch (error) {
-    console.error("Error al subir imagen:", error);
-
-    return res.status(500).json({
-      ok: false,
-      msg: error.message || "Error inesperado al subir la imagen.",
-    });
-  }
-};
-
 const updateInfoUser = async (req, res) => {
   try {
     const { name, phone, email } = req.body;
@@ -552,11 +400,10 @@ const updateInfoUser = async (req, res) => {
     });
   }
 };
-
 module.exports = {
   register,
   login,
-  profile,
+  profile: me, // profile ahora usa la lógica de me
   createUserWithRole,
   me,
   logout,

@@ -11,7 +11,9 @@ const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const moment = require("moment-timezone");
 const { getIO } = require("../socket");
-const sendPushNotification = require("../services/sendPushNotification");
+const {
+  sendPushNotificationMulticast,
+} = require("../services/sendPushNotification");
 const nowCdmx = () => {
   return moment().tz("America/Mexico_City");
 };
@@ -388,13 +390,11 @@ const handleIvsWebhook = async (req, res) => {
 
 const handleStreamStart = async ({ channelArn, streamId }) => {
   try {
-    // Hora actual CDMX
     const now = nowCdmx();
-
-    // Ventana de tolerancia
     const minTime = now.clone().subtract(30, "minutes").toDate();
     const maxTime = now.clone().add(15, "minutes").toDate();
 
+    // 1. Encontrar el Live (Rápido)
     const live = await Live.findOne({
       where: {
         aws_channel_arn: channelArn,
@@ -406,97 +406,87 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       order: [["start_time", "ASC"]], // el más próximo
     });
 
-    if (!live) {
-      console.warn("⚠️ No hay live scheduled dentro de la ventana");
-      return;
-    }
-    if (live.current_stream_id) {
-      console.warn("⚠️ Stream ya iniciado, ignorando evento duplicado");
-      return;
-    }
+    if (!live || live.current_stream_id) return;
+
+    // 2. Actualizar estado (Atómico)
     await live.update({
       status: "live",
-      stream_started_at: now.toDate(), // CDMX
+      stream_started_at: now.toDate(),
       current_stream_id: streamId,
     });
 
+    // 3. Emitir por Socket (Para los que ya están en la app)
     const io = getIO();
     io.emit("live_started", {
       liveId: live.id,
       status: "live",
       startedAt: now.toISOString(),
     });
-    // 🔔 NOTIFICACIONES LIVE INICIADO
-    try {
-      // 1️⃣ Usuarios a notificar
-      const usersToNotify = await User.findAll({
-        where: {
-          roleId: 4,
-          isSubscribed: true,
-        },
-        attributes: ["id"],
-      });
 
-      if (!usersToNotify.length) return;
+    // 4. NOTIFICACIONES EN SEGUNDO PLANO (Fire and Forget) 🚀
+    (async () => {
+      try {
+        console.log("Entra el enviar notificaciones");
 
-      const title = "¡El live ya comenzó! 🔴";
-      const body = live.title
-        ? `${live.title} ya está en vivo`
-        : "Un live acaba de comenzar";
+        // Traemos usuarios y tokens en UNA SOLA consulta (JOIN)
+        const usersWithTokens = await User.findAll({
+          where: { roleId: 4, isSubscribed: true },
+          attributes: ["id"],
+          include: [
+            {
+              model: NotificationToken,
+              as: "NotificationTokens",
+              where: { isActive: true, device: { [Op.ne]: "safari" } },
+              attributes: ["token"],
+              required: false,
+            },
+          ],
+        });
 
-      const url = `/detalle-live/${live.id}`;
+        if (!usersWithTokens.length) return;
 
-      // 2️⃣ Guardar notificaciones en DB (CRÍTICO)
-      const notifications = usersToNotify.map((u) => ({
-        userId: u.id,
-        actorId: live.userId || null,
-        type: "live",
-        entityId: live.id,
-        title,
-        body,
-        url,
-        data: {
-          liveId: live.id,
-          streamId,
-        },
-      }));
+        const title = "¡El live ya comenzó! 🔴";
+        const body = live.title
+          ? `${live.title} ya está en vivo`
+          : "Un live acaba de comenzar";
+        const url = `/detalle-live/${live.id}`;
 
-      await Notifications.bulkCreate(notifications);
-
-      // 3️⃣ Tokens activos
-      const tokens = await NotificationToken.findAll({
-        where: {
-          isActive: true,
-          userId: usersToNotify.map((u) => u.id),
-          device: { [Op.ne]: "safari" },
-        },
-        attributes: ["token"],
-      });
-
-      if (!tokens.length) return;
-
-      // 4️⃣ Push (NO BLOQUEANTE 🔥)
-      for (const { token } of tokens) {
-        sendPushNotification({
-          token,
+        // A. Historial en DB (Bulk Insert - 1 sola query)
+        const notificationsData = usersWithTokens.map((u) => ({
+          userId: u.id,
+          actorId: live.userId || null,
+          type: "live",
+          entityId: live.id,
           title,
           body,
-          data: {
-            type: "live",
-            liveId: String(live.id),
-            url,
-          },
-        }).catch(() => {});
-      }
-    } catch (err) {
-      console.error("⚠️ Error enviando notificaciones live:", err);
-    }
+          url,
+          data: { liveId: live.id, streamId },
+        }));
+        await Notifications.bulkCreate(notificationsData);
 
-    console.log(
-      `✅ Live #${live.id} iniciado (start_time: ${moment(
-        live.start_time,
-      ).format("YYYY-MM-DD HH:mm:ss")})`,
-    );
+        // B. Recolectar tokens y enviar Multicast
+        const allTokens = usersWithTokens.flatMap((u) =>
+          (u.NotificationTokens || []).map((t) => t.token),
+        );
+
+        if (allTokens.length > 0) {
+          // Bloques de 500 para Firebase
+          for (let i = 0; i < allTokens.length; i += 500) {
+            const batch = allTokens.slice(i, i + 500);
+            await sendPushNotificationMulticast({
+              tokens: batch,
+              title,
+              body,
+              data: { type: "live", liveId: String(live.id), url },
+            }).catch((e) => console.error("Error batch push live:", e));
+          }
+        }
+      } catch (err) {
+        console.error("⚠️ Error notificaciones live background:", err);
+      }
+    })();
+
+    console.log(`✅ Live #${live.id} iniciado exitosamente.`);
   } catch (error) {
     console.error("❌ Error en handleStreamStart:", error);
   }

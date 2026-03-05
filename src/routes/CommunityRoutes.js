@@ -16,7 +16,7 @@ router.post(
   PostCtrl.createPost,
 );
 router.get("/posts/course/:courseId", PostCtrl.getPostsByCourse); // público
-router.get("/posts/:id", PostCtrl.getPost);
+// router.get("/posts/:id", PostCtrl.getPost);
 router.put(
   "/posts/:id",
   authMiddleware /*, upload.array("attachments")*/,

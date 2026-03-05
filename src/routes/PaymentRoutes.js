@@ -1,21 +1,19 @@
 const express = require("express");
 const {
-  createPayment,
-  crearSesionPagoUnico,
   crearSesionSuscripcionMensual,
   cancelSubscription,
+  reactivateSubscription,
 } = require("../controllers/PaymentController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
 
 const router = express.Router();
 
-router.post("/create-payment", authMiddleware, createPayment);
-router.post("/create-payment-onetime", authMiddleware, crearSesionPagoUnico);
 router.post(
   "/create-payment-recurring",
   authMiddleware,
   crearSesionSuscripcionMensual,
 );
+router.post("/reactivate", authMiddleware, reactivateSubscription);
 router.post("/cancel", authMiddleware, cancelSubscription);
 
 module.exports = router;

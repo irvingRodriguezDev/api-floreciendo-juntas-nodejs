@@ -19,7 +19,7 @@ const PostComment = sequelize.define(
     },
     content: {
       type: DataTypes.TEXT,
-      allowNull: false,
+      allowNull: true,
     },
     status: {
       type: DataTypes.ENUM("active", "deleted"),
@@ -29,7 +29,7 @@ const PostComment = sequelize.define(
   {
     tableName: "comments",
     timestamps: true,
-  }
+  },
 );
 
 module.exports = PostComment;

@@ -1,37 +1,51 @@
 // helpers/raffle.js
-const { Op } = require("sequelize");
-const { User, Subscription, PointEvent } = require("../models");
+const { Op, fn, col, literal } = require("sequelize");
+const { User, Subscription } = require("../models");
 
-const getEligibleUsers = async () => {
+const getEligibleUsers = async ({
+  excludeIds = [],
+  transaction = null,
+} = {}) => {
   const users = await User.findAll({
-    attributes: ["id", "name", "email", "total_points", "phone"],
+    attributes: [
+      "id",
+      "name",
+      "email",
+      "phone",
+      "total_points",
+      [fn("COUNT", col("subscriptions.id")), "subscriptionCount"],
+    ],
     include: [
       {
         model: Subscription,
         as: "subscriptions",
-        required: false,
-        attributes: ["status"],
-      },
-      {
-        model: PointEvent,
-        as: "points_history",
-        required: false,
-        attributes: ["id"],
+        required: true,
+        attributes: [],
+        where: {
+          status: {
+            [Op.in]: ["active", "past_due"],
+          },
+        },
       },
     ],
     where: {
-      roleId: {
-        [Op.eq]: 4, // 👈 excluye al usuario con id 2
-      },
-      [Op.or]: [
-        { "$subscriptions.status$": "active" },
-        { "$points_history.id$": { [Op.ne]: null } },
-      ],
+      roleId: 4,
+      ...(excludeIds.length > 0 && {
+        id: {
+          [Op.notIn]: excludeIds,
+        },
+      }),
     },
     group: ["User.id"],
+    having: literal("COUNT(subscriptions.id) = 1"),
+    raw: true,
+    transaction,
   });
 
-  return users;
+  return users.map((u) => ({
+    ...u,
+    total_points: Number(u.total_points) || 0,
+  }));
 };
 
 module.exports = { getEligibleUsers };

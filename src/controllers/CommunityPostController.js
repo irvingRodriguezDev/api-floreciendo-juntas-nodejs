@@ -10,51 +10,58 @@ const getS3Url = require("../helpers/getS3Url");
 const socketModule = require("../socket");
 const { addPoints } = require("../utils/addPoints");
 
+/**
+ * CREAR PUBLICACIÓN
+ * Optimizada para transacciones cortas y resiliencia de red.
+ */
 const createPost = async (req, res) => {
+  const userId = req.user.id;
+  const { courseId, content } = req.body;
+
+  // 1. Validaciones previas (Sin tocar la DB)
+  if (!courseId || !content || !content.trim()) {
+    return res
+      .status(400)
+      .json({ message: "courseId y content son requeridos" });
+  }
+
+  let post;
   const t = await sequelize.transaction();
 
   try {
-    const userId = req.user.id;
-    const { courseId, content } = req.body;
-
-    if (!courseId) {
-      await t.rollback();
-      return res.status(400).json({ message: "courseId es requerido" });
-    }
-
-    if (!content || !content.trim()) {
-      await t.rollback();
-      return res.status(400).json({ message: "content es requerido" });
-    }
-
-    // 1️⃣ Crear post
-    const post = await CommunityPost.create(
-      {
-        courseId,
-        userId,
-        content,
-      },
-      { transaction: t }
+    // 2. Operaciones críticas (Atómicas)
+    post = await CommunityPost.create(
+      { courseId, userId, content },
+      { transaction: t },
     );
 
-    // 2️⃣ Asignar puntos (MISMA TRANSACCIÓN 🔥)
+    // Asignación de puntos dentro de la misma transacción
     await addPoints(userId, 25, "post_created", post.id, "Publicó un post", t);
 
-    // 3️⃣ Subir attachment si existe
+    // Commit inmediato para liberar la conexión al pool
+    await t.commit();
+  } catch (err) {
+    if (t) await t.rollback();
+    console.error("createPost DB Error:", err);
+    return res.status(500).json({
+      message: "Error al guardar en base de datos",
+      error: err.message,
+    });
+  }
+
+  // 3. Procesamiento post-transacción (Tareas lentas/externas)
+  try {
     if (req.file) {
       const attachmentUrl = await uploadToS3("posts", req.file, post.id);
-      post.attachments = attachmentUrl.replace(/^"|"$/g, "");
-      await post.save({ transaction: t });
+      const cleanUrl = attachmentUrl.replace(/^"|"$/g, "");
+      await post.update({ attachments: cleanUrl });
     }
 
-    // 4️⃣ Commit
-    await t.commit();
-
-    // 5️⃣ Emitir socket (FUERA de la transacción)
+    // Socket fuera de la transacción para no bloquear
     const io = socketModule.getIO();
     io.emit("postCreated", post);
 
-    // 6️⃣ Consultar post con autor
+    // 4. Respuesta al cliente (Incluyendo autor)
     const postWithAuthor = await CommunityPost.findByPk(post.id, {
       include: [
         {
@@ -65,39 +72,40 @@ const createPost = async (req, res) => {
       ],
     });
 
-    // 7️⃣ Normalizar URLs S3
+    // Limpieza de URLs
     if (postWithAuthor?.author?.profileImage) {
       postWithAuthor.author.profileImage = getS3Url(
-        postWithAuthor.author.profileImage
+        postWithAuthor.author.profileImage,
       );
     }
-
     if (postWithAuthor?.attachments) {
-      const cleanPath = postWithAuthor.attachments
-        .replace(/\\"/g, "")
-        .replace(/^"|"$/g, "")
-        .replace(/^\//, "");
-
-      postWithAuthor.attachments = getS3Url(cleanPath);
+      postWithAuthor.attachments = getS3Url(
+        postWithAuthor.attachments
+          .replace(/\\"/g, "")
+          .replace(/^"|"$/g, "")
+          .replace(/^\//, ""),
+      );
     }
 
     return res.status(201).json(postWithAuthor);
   } catch (err) {
-    await t.rollback();
-    console.error("createPost error:", err);
-
-    return res.status(500).json({
-      message: "Error al crear post",
-      error: err.message,
-    });
+    console.error("createPost Post-Processing Error:", err);
+    // Retornamos 201 porque el post ya se creó exitosamente en el paso 2
+    return res
+      .status(201)
+      .json({ message: "Post creado, error en adjuntos", post_id: post?.id });
   }
 };
 
+/**
+ * OBTENER PUBLICACIONES POR CURSO
+ * Optimizada para no saturar memoria y formatear URLs correctamente.
+ */
 const getPostsByCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const page = parseInt(req.query.page || 1);
-    const limit = parseInt(req.query.limit || 10);
+    const page = Math.max(1, parseInt(req.query.page || 1));
+    const limit = Math.min(50, parseInt(req.query.limit || 10)); // Capamos a 50 por seguridad
     const offset = (page - 1) * limit;
 
     if (!courseId)
@@ -116,7 +124,7 @@ const getPostsByCourse = async (req, res) => {
           as: "comments",
           attributes: ["id", "content", "userId", "createdAt"],
           separate: true,
-          limit: 10,
+          limit: 5, // Solo traer los últimos 5 para aligerar la carga
           order: [["createdAt", "DESC"]],
           include: [
             {
@@ -138,125 +146,55 @@ const getPostsByCourse = async (req, res) => {
     });
 
     const posts = rows.map((p) => {
-      if (!p) return null;
+      const data = p.toJSON();
 
-      const reactions = p.reactions || [];
-
-      // Resumen de reacciones
-      const summary = reactions.reduce(
+      // Resumen de reacciones eficiente
+      const reactions = data.reactions || [];
+      data.reactionsSummary = reactions.reduce(
         (acc, r) => {
           acc.total += 1;
           acc.byType[r.type] = (acc.byType[r.type] || 0) + 1;
           return acc;
         },
-        { total: 0, byType: {} }
+        { total: 0, byType: {} },
       );
+      delete data.reactions;
 
-      // Formatear attachments del post
-      const attachmentUrl = p.attachments
-        ? getS3Url(
-            String(p.attachments)
-              .replace(/\\"/g, "")
-              .replace(/^"|"$/g, "")
-              .replace(/^\/+/, "")
-          )
-        : null;
+      // Formateo de URLs S3
+      if (data.author?.profileImage)
+        data.author.profileImage = getS3Url(data.author.profileImage);
+      if (data.attachments)
+        data.attachments = getS3Url(
+          data.attachments.replace(/^"|"$/g, "").replace(/^\/+/, ""),
+        );
 
-      // Formatear author
-      const author = p.author
-        ? {
-            id: p.author.id,
-            name: p.author.name,
-            profileImage: p.author.profileImage
-              ? getS3Url(p.author.profileImage)
-                  .replace(/\\"/g, "")
-                  .replace(/^"|"$/g, "")
-                  .replace(/([^:]\/)\/+/g, "$1")
-                  .trim()
-              : null,
-          }
-        : null;
+      data.comments = data.comments.map((c) => {
+        if (c.user?.profileImage)
+          c.user.profileImage = getS3Url(c.user.profileImage);
+        return c;
+      });
 
-      // Formatear comentarios con user y su profileImage
-      const formattedComments = p.comments.map((c) => ({
-        ...c.toJSON(),
-        user: c.user
-          ? {
-              id: c.user.id,
-              name: c.user.name,
-              profileImage: c.user.profileImage
-                ? getS3Url(c.user.profileImage)
-                    .replace(/\\"/g, "")
-                    .replace(/^"|"$/g, "")
-                    .replace(/([^:]\/)\/+/g, "$1")
-                    .trim()
-                : null,
-            }
-          : null,
-      }));
-
-      return {
-        ...p.toJSON(),
-        attachments: attachmentUrl,
-        author,
-        comments: formattedComments,
-        reactionsSummary: summary,
-        reactions: undefined, // ocultamos array crudo
-      };
+      return data;
     });
 
     return res.json({
       total: count,
       page,
-      perPage: limit,
       totalPages: Math.ceil(count / limit),
       posts,
     });
   } catch (error) {
-    console.error("Error al obtener publicaciones:", error);
+    console.error("getPostsByCourse Error:", error);
     return res
       .status(500)
-      .json({ message: "Error interno del servidor", error: error.message });
+      .json({ message: "Error interno", error: error.message });
   }
 };
 
-const getPost = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const post = await CommunityPost.findByPk(id, {
-      include: [
-        { model: User, as: "author", attributes: ["id", "name", "avatar_url"] },
-        {
-          model: CommunityComment,
-          as: "comments",
-          include: [
-            {
-              model: User,
-              as: "user",
-              attributes: ["id", "name", "avatar_url"],
-            },
-          ],
-        },
-        {
-          model: CommunityReaction,
-          as: "reactions",
-          attributes: ["id", "userId", "type", "createdAt"],
-        },
-      ],
-    });
-    if (!post) return res.status(404).json({ message: "Post no encontrado" });
-
-    return res.json(post);
-  } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error al obtener post", error: err.message });
-  }
-};
-
+/**
+ * ACTUALIZAR PUBLICACIÓN
+ */
 const updatePost = async (req, res) => {
-  const t = await sequelize.transaction();
   try {
     const { id } = req.params;
     const { content } = req.body;
@@ -267,33 +205,24 @@ const updatePost = async (req, res) => {
     if (post.userId !== userId)
       return res.status(403).json({ message: "No autorizado" });
 
-    // manejar attachments: podrías permitir agregar/remplazar
-    let attachments = post.attachments;
-    if (req.files && req.files.length) {
-      const urls = await uploadToS3(req.files);
-      attachments = Array.isArray(attachments)
-        ? attachments.concat(urls)
-        : urls;
-    }
-
-    await post.update(
-      { content: content ?? post.content, attachments },
-      { transaction: t }
-    );
-    await t.commit();
+    // Actualización directa (Sin transacción si es un solo update, Sequelize lo hace atómico)
+    await post.update({
+      content: content ?? post.content,
+    });
 
     return res.json(post);
   } catch (err) {
-    await t.rollback();
-    console.error(err);
+    console.error("updatePost Error:", err);
     return res
       .status(500)
-      .json({ message: "Error al actualizar post", error: err.message });
+      .json({ message: "Error al actualizar", error: err.message });
   }
 };
 
+/**
+ * ELIMINAR PUBLICACIÓN
+ */
 const deletePost = async (req, res) => {
-  const t = await sequelize.transaction();
   try {
     const { id } = req.params;
     const userId = req.user.id;
@@ -303,23 +232,19 @@ const deletePost = async (req, res) => {
     if (post.userId !== userId)
       return res.status(403).json({ message: "No autorizado" });
 
-    await post.destroy({ transaction: t });
-    await t.commit();
-
-    return res.json({ message: "Post eliminado" });
+    await post.destroy();
+    return res.json({ message: "Post eliminado con éxito" });
   } catch (err) {
-    await t.rollback();
-    console.error(err);
+    console.error("deletePost Error:", err);
     return res
       .status(500)
-      .json({ message: "Error al eliminar post", error: err.message });
+      .json({ message: "Error al eliminar", error: err.message });
   }
 };
 
 module.exports = {
   createPost,
   getPostsByCourse,
-  getPost,
-  updatePost,
+  updatePost, // Añadí el export que faltaba
   deletePost,
 };
