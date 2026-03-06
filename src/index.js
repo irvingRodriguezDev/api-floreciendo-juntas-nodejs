@@ -64,7 +64,10 @@ app.use(
   cors({
     origin:
       process.env.NODE_ENV === "production"
-        ? ["https://floreciendojuntas.com"]
+        ? [
+            "https://floreciendojuntas.com",
+            "https://admin.floreciendojuntas.com",
+          ]
         : "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

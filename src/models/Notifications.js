@@ -12,10 +12,12 @@ const Notifications = sequelize.define(
     userId: {
       type: DataTypes.INTEGER,
       allowNull: false,
+      field: "user_id",
     },
     actorId: {
       type: DataTypes.INTEGER,
       allowNull: true,
+      field: "actor_id",
     },
     type: {
       // Usar STRING con límite ayuda a la velocidad de indexación
@@ -25,6 +27,7 @@ const Notifications = sequelize.define(
     entityId: {
       type: DataTypes.INTEGER,
       allowNull: true,
+      field: "entity_id",
     },
     data: {
       type: DataTypes.JSON,
@@ -42,6 +45,7 @@ const Notifications = sequelize.define(
     readAt: {
       type: DataTypes.DATE,
       allowNull: true,
+      field: "read_at",
     },
   },
   {
@@ -52,12 +56,12 @@ const Notifications = sequelize.define(
       // 🚀 EL MÁS IMPORTANTE: Para cargar el historial del usuario rápido y ordenado
       {
         name: "idx_user_created",
-        fields: ["userId", "createdAt"],
+        fields: ["user_id", "created_at"],
       },
       // 🚀 PARA FILTRAR NO LEÍDAS: Evita que MySQL escanee toda la tabla
       {
         name: "idx_user_unread",
-        fields: ["userId", "readAt"],
+        fields: ["user_id", "read_at"],
       },
       // Índice para limpiezas masivas (Cron jobs)
       { fields: ["created_at"] },
