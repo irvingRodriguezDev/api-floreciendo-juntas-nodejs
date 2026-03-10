@@ -59,7 +59,11 @@ const register = async (req, res) => {
     const { password, email, name, phone, username } = req.body;
 
     const exists = await User.findOne({ where: { email }, attributes: ["id"] });
-    if (exists) return res.status(400).json({ msg: "Usuario ya existe" });
+
+    if (exists)
+      return res
+        .status(400)
+        .json({ msg: "El correo ingresado ya esta registrado" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const sessionId = uuidv4();
@@ -117,8 +121,7 @@ const me = async (req, res) => {
           model: Subscription,
           as: "Subscriptions",
           required: false,
-          limit: 1, // Solo necesitamos la última
-          order: [["end_date", "DESC"]],
+          where: { userId: req.user.id },
         },
       ],
     });
@@ -126,7 +129,9 @@ const me = async (req, res) => {
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
     const sub = user.Subscriptions?.[0] || null;
-    const isSubscribed = sub && sub.status === "active";
+
+    // past_due sigue teniendo acceso (periodo de gracia)
+    const isSubscribed = sub && ["active", "past_due"].includes(sub.status);
 
     res.status(200).json({
       user: {

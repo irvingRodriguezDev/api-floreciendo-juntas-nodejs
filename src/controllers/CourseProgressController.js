@@ -6,7 +6,11 @@ const getProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
-
+    if (isNaN(userId)) {
+      return res
+        .status(400)
+        .json({ error: "El ID de usuario proporcionado no es válido" });
+    }
     const userProgress = await CourseProgress.findOne({
       where: { userId, courseId },
     });

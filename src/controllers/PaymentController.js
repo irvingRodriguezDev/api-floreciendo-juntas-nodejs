@@ -33,6 +33,24 @@ const getOrCreateStripeCustomer = async (user) => {
   await user.update({ stripe_id: customer.id });
   return customer.id;
 };
+const limpiarSuscripcionesPrevias = async (customerId) => {
+  // Traemos todas las suscripciones del cliente, sin importar el estado
+  const subs = await stripe.subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 10,
+  });
+
+  // Cancelamos todo lo que no esté ya cancelado
+  for (const sub of subs.data) {
+    if (sub.status !== "canceled") {
+      await stripe.subscriptions.cancel(sub.id);
+      console.log(
+        `✅ Suscripción previa ${sub.id} cancelada para evitar conflictos.`,
+      );
+    }
+  }
+};
 
 /* ================================================= */
 /* 🔹 CREAR O REACTIVAR SUSCRIPCIÓN MENSUAL         */
@@ -40,91 +58,31 @@ const getOrCreateStripeCustomer = async (user) => {
 const crearSesionSuscripcionMensual = async (req, res) => {
   try {
     const { userId, priceId } = req.body;
-
     const user = await User.findByPk(userId);
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    // 1️⃣ Aseguramos que usamos el stripe_id guardado en User para evitar duplicados
     const customerId = await getOrCreateStripeCustomer(user);
 
-    // 2️⃣ BUSCAR SUSCRIPCIONES (Active o Past_due)
-    // Filtramos por estado para no traer suscripciones canceladas antiguas
-    const stripeSubs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "active",
-      limit: 1,
-    });
+    // 1️⃣ MEJORA: Limpiamos Stripe antes de crear algo nuevo
+    await limpiarSuscripcionesPrevias(customerId);
 
-    // También buscamos si tiene alguna en past_due para invitarlo a pagar la existente
-    // en lugar de crear una nueva
-    const pastDueSubs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "past_due",
-      limit: 1,
-    });
-
-    const currentSub = stripeSubs.data[0];
-    const overdueSub = pastDueSubs.data[0];
-
-    // CASO A: Ya tiene una suscripción ACTIVA
-    if (currentSub) {
-      if (!currentSub.cancel_at_period_end) {
-        return res
-          .status(400)
-          .json({ msg: "Ya tienes una suscripción activa y vigente." });
-      }
-
-      // Si está activa pero marcada para cancelar (periodo de gracia), la reactivamos
-      await stripe.subscriptions.update(currentSub.id, {
-        cancel_at_period_end: false,
-      });
-
-      await Subscription.upsert({
-        userId: user.id,
-        stripe_subscription_id: currentSub.id,
-        stripe_customer_id: customerId,
-        status: "active",
-      });
-
-      return res.status(200).json({
-        msg: "Tu suscripción ha sido reactivada exitosamente.",
-        reactivated: true,
-      });
-    }
-
-    // CASO B: Tiene una suscripción PAST_DUE (El problema que tenías)
-    // En lugar de crear una nueva suscripción, lo ideal es mandarlo al "Customer Portal"
-    // o que pague la factura pendiente. Para simplificar, si hay una past_due,
-    // la cancelamos antes de crear la nueva para evitar cobros dobles futuros.
-    if (overdueSub) {
-      await stripe.subscriptions.cancel(overdueSub.id);
-      // Opcional: Podrías marcarla como cancelada en tu DB también
-    }
-
-    // 3️⃣ CREAR CHECKOUT SESSION
+    // 2️⃣ CREAR CHECKOUT SESSION (Ya no hay riesgo de duplicados)
     const session = await stripe.checkout.sessions.create({
-      customer: customerId, // Usamos el ID existente
+      customer: customerId,
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      // IMPORTANTE: Pasar los metadatos también a la suscripción
       subscription_data: {
-        metadata: {
-          userId: user.id.toString(),
-          priceId: priceId.toString(),
-        },
+        metadata: { userId: user.id.toString(), priceId },
       },
-      metadata: {
-        userId: user.id.toString(),
-        priceId: priceId.toString(),
-      },
+      metadata: { userId: user.id.toString(), priceId },
       success_url: `${process.env.CLIENT_URL}/success-payment-subscription?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
-    // 4️⃣ UPSERT EN TU DB
-    // Usamos el ID del usuario como criterio de unicidad para evitar duplicados locales
-    await Subscription.upsert({
+    // 3️⃣ UPSERT EN TU DB (Limpia el status local)
+    await Subscription.destroy({ where: { userId: user.id } }); // Borramos registro viejo
+    await Subscription.create({
       userId: user.id,
       stripe_checkout_session_id: session.id,
       stripe_customer_id: customerId,
@@ -135,7 +93,7 @@ const crearSesionSuscripcionMensual = async (req, res) => {
 
     return res.status(200).json({ id: session.id, url: session.url });
   } catch (error) {
-    console.error("Error en flujo de suscripción:", error.message);
+    console.error("❌ Error en flujo de suscripción:", error.message);
     return res.status(400).json({ msg: error.message });
   }
 };

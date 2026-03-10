@@ -11,8 +11,10 @@ const stripe = require("../config/stripe");
 const moment = require("moment-timezone");
 const { generateICSFile } = require("../helpers/generateCalendarLinks");
 const { User, Notifications, NotificationToken } = require("../models");
-const sendPushNotification = require("../services/sendPushNotification");
-
+const {
+  sendPushNotificationMulticast,
+} = require("../services/sendPushNotification");
+const emitNotification = require("../helpers/emitNotification");
 // Crear un evento y generar tickets
 const RESERVATION_MINUTES = 15;
 const SEARCH_LIMIT = 50;
@@ -101,70 +103,72 @@ const createEvent = async (req, res) => {
       event,
       ticketsCreated: totalTickets,
     });
-    try {
-      const creatorId = req.user.id;
+    async () => {
+      try {
+        const usersWithTokens = await User.findAll({
+          where: { roleId: 4, isSubscribed: true },
+          attributes: ["id"],
+          include: [
+            {
+              model: NotificationToken,
+              as: "NotificationTokens",
+              where: { isActive: true, device: { [Op.ne]: "safari" } },
+              attributes: ["token"],
+              required: false,
+            },
+          ],
+        });
+        if (usersWithTokens.length > 0) {
+          const notifTitle = "Nuevo evento públicado";
+          const notifBody = `${event.name} se ha publicado`;
+          const notifUrl = `/detalle-evento/${event.id}`;
 
-      // 1️⃣ Usuarios a notificar
-      const usersToNotify = await User.findAll({
-        where: {
-          roleId: 4,
-          isSubscribed: true,
-          id: { [Op.ne]: creatorId },
-        },
-        attributes: ["id"],
-      });
+          // 1. Crear las notificaciones en la DB
+          const createdNotifications = await Notifications.bulkCreate(
+            usersWithTokens.map((u) => ({
+              userId: u.id,
+              actorId: null,
+              type: "post",
+              entityId: event.id,
+              title: notifTitle,
+              body: notifBody,
+              url: notifUrl,
+              data: { eventId: event.id },
+            })),
+            { returning: true }, // 💡 Importante para obtener los objetos creados
+          );
 
-      if (!usersToNotify.length) return;
+          // 🔥 2. EMITIR POR SOCKET A CADA USUARIO CONECTADO
+          // Como es una comunidad, notificamos a todos los usuarios de la lista
+          createdNotifications.forEach((notif) => {
+            emitNotification(notif.userId, notif);
+          });
 
-      const titleNotification = "Nuevo evento 🎉";
-      const bodyNotification = `Se ha creado un nuevo evento: ${event.title}`;
-      const url = `/detalle-evento/${event.id}`;
+          // 3. Recolectar tokens para Push (Firebase)
+          const allTokens = usersWithTokens.flatMap((u) =>
+            (u.NotificationTokens || []).map((t) => t.token),
+          );
 
-      // 2️⃣ Guardar notificaciones en DB (lo más importante)
-      const notifications = usersToNotify.map((u) => ({
-        userId: u.id,
-        actorId: creatorId,
-        type: "event",
-        entityId: event.id,
-        title: titleNotification,
-        body: bodyNotification,
-        url,
-        data: {
-          eventId: event.id,
-          slug: event.slug,
-        },
-      }));
-
-      await Notifications.bulkCreate(notifications);
-
-      // 3️⃣ Obtener tokens activos
-      const tokens = await NotificationToken.findAll({
-        where: {
-          isActive: true,
-          userId: usersToNotify.map((u) => u.id),
-          device: { [Op.ne]: "safari" },
-        },
-        attributes: ["token"],
-      });
-
-      if (!tokens.length) return;
-
-      // 4️⃣ Enviar pushes (NO BLOQUEANTE 🔥)
-      for (const { token } of tokens) {
-        sendPushNotification({
-          token,
-          title: titleNotification,
-          body: bodyNotification,
-          data: {
-            type: "event",
-            eventId: String(event.id),
-            url,
-          },
-        }).catch(() => {});
+          if (allTokens.length > 0) {
+            for (let i = 0; i < allTokens.length; i += 500) {
+              const batch = allTokens.slice(i, i + 500);
+              await sendPushNotificationMulticast({
+                tokens: batch,
+                title: notifTitle,
+                body: notifBody,
+                data: {
+                  type: "event",
+                  eventId: String(event.id),
+                  url: notifUrl,
+                },
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        console.error("❌ Error en Notificaciones evento:", err);
       }
-    } catch (err) {
-      console.error("⚠️ Error enviando notificaciones de evento:", err);
-    }
+    };
   } catch (error) {
     // ❌ Si algo falla, revertir TODO
     await t.rollback();
@@ -622,7 +626,7 @@ const getSimilarEvents = async (req, res) => {
     // 4️⃣ Formatear imágenes
     const formatted = similarEvents.map((event) => ({
       ...event.toJSON(),
-      image: event.image || null,
+      image: event.image ? getS3Url(event.image) : null,
     }));
 
     return res.json({

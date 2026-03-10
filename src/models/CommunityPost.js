@@ -25,7 +25,7 @@ const CommunityPost = sequelize.define(
   {
     tableName: "community_posts",
     timestamps: true,
-  }
+  },
 );
 
 // 🔗 Asociaciones

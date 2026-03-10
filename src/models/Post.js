@@ -29,11 +29,19 @@ const Post = sequelize.define(
       type: DataTypes.ENUM("active", "deleted"),
       defaultValue: "active",
     },
+    isPinned: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    pinnedUntil: {
+      type: DataTypes.DATE, // Aquí guardaremos la fecha exacta en la que expira
+      allowNull: true,
+    },
   },
   {
     tableName: "posts",
     timestamps: true,
-  }
+  },
 );
 
 module.exports = Post;

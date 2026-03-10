@@ -6,7 +6,6 @@ const {
   PostMedia,
   PostLike,
   User,
-  Subscription,
   NotificationToken,
   Notifications,
 } = require("../models");
@@ -21,6 +20,7 @@ const {
   sendPushNotificationMulticast,
 } = require("../services/sendPushNotification");
 const emitNotification = require("../helpers/emitNotification");
+const moment = require("moment-timezone");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
   "image/jpeg",
@@ -36,7 +36,11 @@ const ALLOWED_MIME_TYPES = [
 const createPost = async (req, res) => {
   const userId = req.user.id;
 
-  const { title, content = "" } = req.body;
+  const { title, content = "", pinned = false, durationHours } = req.body;
+  const isPinned = pinned === "true"; // Convierte el string "true" a booleano
+  const hours = parseInt(durationHours, 10); // Convierte a número
+
+  const expiryDate = moment().add(hours, "hours").toDate();
   const files = req.files || [];
   const uploadedFiles = []; // Para rollback de S3 si algo falla
 
@@ -82,7 +86,13 @@ const createPost = async (req, res) => {
     const result = await sequelize.transaction(async (t) => {
       // A. Crear post
       const post = await Post.create(
-        { userId, title: title.trim(), content: content.trim() },
+        {
+          userId,
+          title: title.trim(),
+          content: content.trim(),
+          isPinned: isPinned,
+          pinnedUntil: expiryDate,
+        },
         { transaction: t },
       );
 
@@ -233,7 +243,11 @@ const getFeed = async (req, res) => {
 
     const queryOptions = {
       where: whereCondition,
-      order: [["createdAt", "DESC"]],
+      order: [
+        ["isPinned", "DESC"],
+        ["pinnedUntil", "DESC"],
+        ["createdAt", "DESC"],
+      ],
       distinct: true,
       include: [
         {

@@ -40,6 +40,23 @@ const initCronJobs = () => {
       timezone: "America/Mexico_City", // 👈 Ajusta esto a tu zona horaria local
     },
   );
+
+  //se eejecuta cada dia a las 3AM
+  cron.schedule("0 3 * * *", async () => {
+    console.log("🔄 Iniciando limpieza de posts anclados...");
+
+    const [affectedRows] = await Post.update(
+      { isPinned: false, pinnedUntil: null },
+      {
+        where: {
+          isPinned: true,
+          pinnedUntil: { [Op.lte]: new Date() }, // Limpia todo lo que expiró antes de este momento
+        },
+      },
+    );
+
+    console.log(`✅ Se desanclaron ${affectedRows} posts.`);
+  });
 };
 
 module.exports = { initCronJobs };
