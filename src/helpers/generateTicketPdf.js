@@ -168,8 +168,9 @@ const generateTicketHTML = (ticket, event, user) => {
       left: 0;
       width: 100%;
       height: 100%;
-background:
-  #F3B9CD;
+      background:
+        url('https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/TEDDY+CAROLINA+TAVERA+(1).png') center right 30px/65% no-repeat,
+        #F3B9CD;
       background-blend-mode: multiply;
       opacity: 0.3;
       z-index: -1;
@@ -326,6 +327,7 @@ const generateTicketPDF = async (ticket) => {
     }
 
     const { key, url } = JSON.parse(response.body);
+    console.log(key, "la key");
 
     // 👀 Opcional: si quieres formatear la URL con tu helper
     const finalUrl = getS3Url ? getS3Url(key) : url;

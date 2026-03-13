@@ -6,6 +6,7 @@ const sequelize = require("../config/db");
 const { Op } = require("sequelize");
 const { generateCalendarLinks } = require("../helpers/generateCalendarLinks");
 const getS3Url = require("../helpers/getS3Url");
+const generateTicketPDF = require("../helpers/generateTicketPdf");
 // Enviar correo con PDF
 const sendTicketEmail = async (ticket) => {
   const transporter = nodemailer.createTransport({
@@ -30,23 +31,17 @@ const sendTicketEmail = async (ticket) => {
 
 const getUserTickets = async (req, res) => {
   try {
-    const { userId } = req.params;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
 
-    if (!userId) {
-      return res
-        .status(400)
-        .json({ message: "El ID del usuario es requerido" });
-    }
-
-    const user = await User.findByPk(userId);
+    // ✅ Usuario desde middleware de auth, no desde params
+    const user = await User.findByPk(req.user.id);
     if (!user) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // evita problemas de zona horaria
+    today.setHours(0, 0, 0, 0);
 
     const offset = (page - 1) * limit;
 
@@ -61,7 +56,13 @@ const getUserTickets = async (req, res) => {
             model: Event,
             as: "Event",
             where: {
-              startDate: { [Op.gte]: today }, // ✅ solo eventos vigentes
+              [Op.or]: [
+                { endDate: { [Op.gte]: new Date() } }, // si tiene endDate
+                {
+                  endDate: null,
+                  startDate: { [Op.gte]: today }, // si no tiene endDate, usa startDate del día
+                },
+              ],
             },
             attributes: [
               "id",
@@ -74,7 +75,7 @@ const getUserTickets = async (req, res) => {
             ],
           },
         ],
-        order: [["createdAt", "DESC"]],
+        order: [["updatedAt", "DESC"]],
         limit,
         offset,
       },

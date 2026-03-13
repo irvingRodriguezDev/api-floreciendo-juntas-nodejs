@@ -31,7 +31,7 @@ const sendTicketEmail = async (tickets, event, user) => {
     const calendarButtonsHTML = generateCalendarButtonsHTML(calendarLinks);
 
     // 5. URL del perfil donde descargarán sus boletos
-    const profileUrl = `${process.env.FRONTEND_URL}/perfil/boletos`;
+    const profileUrl = `${process.env.CLIENT_URL}/mi-perfil`;
 
     // 6. ID de orden (tomado del primer ticket como referencia)
     const orderId = tickets[0]?.orderId ?? tickets[0]?.id;
@@ -75,7 +75,7 @@ const sendTicketEmail = async (tickets, event, user) => {
     .info-label { font-size: 10px; font-weight: 500; letter-spacing: 1.5px; text-transform: uppercase; color: #ec4899; margin-bottom: 2px; }
     .info-value { font-size: 13px; color: #2d1a24; font-weight: 400; line-height: 1.4; }
     .purchase-summary { background: #fdf6f9; border: 1px solid #f3d0de; border-radius: 12px; padding: 20px 24px; margin-bottom: 32px; }
-    .purchase-summary-label { font-size: 10px; font-weight: 500; letter-spacing: 2.5px; text-transform: uppercase; color: #ec4899; margin-bottom: 14px; }
+    .purchase-summary-label { font-size: 10px; font-weight: 500; letter-spacing: 2.5px; text-transform: uppercase; color: #ec4899; margin-bottom: 14px; display: block; }
     .summary-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #7a5568; padding: 6px 0; border-bottom: 1px dashed #f3d0de; }
     .summary-row:last-child { border-bottom: none; padding-top: 12px; margin-top: 4px; }
     .summary-row.total { font-weight: 500; color: #1a0d13; font-size: 14px; }
@@ -159,21 +159,28 @@ const sendTicketEmail = async (tickets, event, user) => {
       </div>
 
       <div class="purchase-summary">
-        <p class="purchase-summary-label">Resumen de compra</p>
-        <div class="summary-row">
-          <span>Boletos adquiridos </span>
-           <span> <b> ${quantity} </b> boleto${quantity > 1 ? "s" : ""}</span>
-        </div>
-        <div class="summary-row">
-          <span>Precio por boleto </span>
-          <span><b>
-          $${unitPrice.toFixed(2)} MXN
-          </b> </span>
-        </div>
-        <div class="summary-row total">
-          <span>Total pagado</span>
-          <span class="summary-value">$${total.toFixed(2)} MXN</span>
-        </div>
+        <span class="purchase-summary-label">Resumen de compra</span>
+            
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr style="border-bottom: 1px dashed #f3d0de;">
+            <td style="font-size: 13px; color: #7a5568; padding: 6px 0;">Boletos adquiridos</td>
+            <td align="right" style="font-size: 13px; color: #7a5568; padding: 6px 0;">
+              <b>${quantity}</b> boleto${quantity > 1 ? "s" : ""}
+            </td>
+          </tr>
+          <tr style="border-bottom: 1px dashed #f3d0de;">
+            <td style="font-size: 13px; color: #7a5568; padding: 6px 0;">Precio por boleto</td>
+            <td align="right" style="font-size: 13px; color: #7a5568; padding: 6px 0;">
+              <b>$${unitPrice.toFixed(2)} MXN</b>
+            </td>
+          </tr>
+          <tr>
+            <td style="font-size: 14px; font-weight: 500; color: #1a0d13; padding-top: 12px;">Total pagado</td>
+            <td align="right" style="font-size: 14px; font-weight: 600; color: #c2185b; padding-top: 12px;">
+              $${total.toFixed(2)} MXN
+            </td>
+          </tr>
+        </table>
       </div>
 
       <div class="cta-wrapper">

@@ -16,7 +16,7 @@ router.get("/", eventController.getEvents);
 router.get("/topsales", eventController.topEventsSales);
 router.get("/similar/:id", eventController.getSimilarEvents);
 router.get("/latest", eventController.getLatestEvents);
-router.get("/:eventId/:ticketId/calendar", eventController.downloadIcsFile);
+router.get("/:eventId/calendar", eventController.downloadIcsFile);
 router.get("/:id", eventController.getEventById);
 router.put("/:id", upload.single("image"), eventController.updateEvent);
 router.delete("/:id", authMiddleware, eventController.deleteEvent);
