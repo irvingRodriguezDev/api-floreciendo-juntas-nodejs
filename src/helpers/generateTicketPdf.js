@@ -168,9 +168,8 @@ const generateTicketHTML = (ticket, event, user) => {
       left: 0;
       width: 100%;
       height: 100%;
-      background:
-        url('https://floreciendojuntas1.s3.us-east-2.amazonaws.com/local/Statics/TEDDY+CAROLINA+TAVERA+(1).png') center right 30px/65% no-repeat,
-        #F3B9CD;
+background:
+  #F3B9CD;
       background-blend-mode: multiply;
       opacity: 0.3;
       z-index: -1;
@@ -267,7 +266,7 @@ const generateTicketHTML = (ticket, event, user) => {
       <div class="scissors">✂</div>
     </div>
 
-    <div class="right-section">
+    <div class="right-section"  >
       <div class="attendee-section">
         <div class="label">Asistente</div>
         <h2 class="attendee-name">${user.name || "Invitado Especial"}</h2>

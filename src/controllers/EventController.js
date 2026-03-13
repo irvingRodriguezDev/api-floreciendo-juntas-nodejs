@@ -468,11 +468,11 @@ const updateEvent = async (req, res) => {
   }
 };
 
-// Comprar un ticket
+// Comprar tickets
 const buyTicket = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { eventId, buyerName, buyerEmail } = req.body;
+    const { eventId, buyerName, buyerEmail, quantity = 1 } = req.body;
 
     // Validar campos requeridos
     if (!eventId || !buyerName || !buyerEmail) {
@@ -480,7 +480,13 @@ const buyTicket = async (req, res) => {
       return res.status(400).json({ message: "Faltan campos requeridos" });
     }
 
-    // Buscar el evento para obtener el precio
+    // Validar quantity
+    if (quantity < 1 || quantity > 10) {
+      await t.rollback();
+      return res.status(400).json({ message: "Cantidad inválida (1-10)" });
+    }
+
+    // Buscar el evento
     const event = await Event.findByPk(eventId, { transaction: t });
 
     if (!event) {
@@ -488,109 +494,120 @@ const buyTicket = async (req, res) => {
       return res.status(404).json({ message: "Evento no encontrado" });
     }
 
-    // Buscar un ticket no vendido y no reservado (o con reserva expirada)
-    // Bloqueamos la fila con FOR UPDATE para evitar race conditions
+    // Buscar N boletos disponibles (no vendidos, no reservados o con reserva expirada)
     const now = new Date();
-    const ticket = await Ticket.findOne({
+    const tickets = await Ticket.findAll({
       where: {
         eventId,
         sold: false,
-        // Reservado false OR reservation expired
         [Op.or]: [
           { reserved: false },
           { reservation_expires_at: { [Op.lt]: now } },
           { reservation_expires_at: null },
         ],
       },
+      order: [["id", "ASC"]], // 🔑 Orden secuencial para boletos consecutivos
+      limit: quantity,
       lock: t.LOCK.UPDATE,
       transaction: t,
     });
 
-    if (!ticket) {
+    // ¿Hay suficientes boletos?
+    if (tickets.length < quantity) {
       await t.rollback();
-      return res.status(400).json({ message: "Tickets agotados" });
+      return res.status(400).json({
+        message:
+          tickets.length === 0
+            ? "Tickets agotados"
+            : `Solo quedan ${tickets.length} boleto(s) disponibles`,
+      });
     }
 
-    // Reservar el ticket temporalmente
-    // ⚠️ Stripe requiere al menos 30 minutos de expiración
+    // Reservar todos los boletos
     const expirationMinutes = Math.max(RESERVATION_MINUTES || 30, 30);
     const expiresAt = new Date(Date.now() + expirationMinutes * 60 * 1000);
 
-    ticket.reserved = true;
-    ticket.reservation_expires_at = expiresAt;
-    ticket.buyerName = buyerName;
-    ticket.buyerEmail = buyerEmail;
-    await ticket.save({ transaction: t });
+    await Promise.all(
+      tickets.map((ticket) =>
+        ticket.update(
+          {
+            reserved: true,
+            reservation_expires_at: expiresAt,
+            buyerName,
+            buyerEmail,
+          },
+          { transaction: t },
+        ),
+      ),
+    );
 
-    // ✅ Crear sesión de Stripe (CONFIGURACIÓN CORREGIDA)
+    // IDs como string separado por comas para la metadata de Stripe
+    const ticketIds = tickets.map((t) => t.id).join(",");
+    const firstTicket = tickets[0].id;
+    // Crear sesión de Stripe
     const session = await stripe.checkout.sessions.create({
-      mode: "payment", // ✅ Pago único
-
-      // ✅ Métodos de pago automáticos habilitados (mejor UX)
+      mode: "payment",
 
       line_items: [
         {
           price_data: {
             currency: "mxn",
             product_data: {
-              name: `Boleto para el evento - ${event.title}`,
-              // description: event.description || `Evento: ${event.title}`,
+              name: `${quantity} boleto(s) — ${event.title}`,
+              description:
+                quantity > 1
+                  ? `${quantity} boletos para ${event.title}`
+                  : `Boleto #${firstTicket}`,
             },
-            unit_amount: event.price * 100, // Precio en centavos
+            unit_amount: event.price * 100, // precio unitario en centavos
           },
-          quantity: 1,
+          quantity, // 🔑 Stripe multiplica el precio automáticamente
         },
       ],
 
-      // ✅ Configuración del Payment Intent
       payment_intent_data: {
-        // ✅ NO incluir setup_future_usage = NO se guarda la tarjeta
         metadata: {
-          ticketId: ticket.id,
-          eventId,
+          flow: "VENTA_TICKET",
+          eventId: String(eventId),
+          ticketIds, // "101,102,103"
+          quantity: String(quantity),
           buyerName,
           buyerEmail,
-          flow: "VENTA_TICKET",
         },
       },
 
-      // ✅ Metadatos a nivel de sesión (respaldo)
       metadata: {
-        ticketId: ticket.id,
-        eventId,
+        flow: "VENTA_TICKET",
+        eventId: String(eventId),
+        ticketIds, // "101,102,103"
+        quantity: String(quantity),
         buyerName,
         buyerEmail,
-        flow: "VENTA_TICKET",
       },
 
-      // ✅ URLs de redirección
+      customer_email: buyerEmail,
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
+
       success_url: `${process.env.CLIENT_URL}/success-payment-tickets?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/error`,
-
-      // ✅ Configuración adicional recomendada
-      customer_email: buyerEmail, // Pre-llenar email en Stripe Checkout
-      expires_at: Math.floor(expiresAt.getTime() / 1000), // Sincronizado con reserva del ticket
     });
 
-    // Commit de la transacción — la reserva quedó persistida
     await t.commit();
 
-    // Devolver URL de checkout para redirigir al cliente
     return res.status(200).json({
       url: session.url,
       expiresAt,
-      sessionId: session.id, // ✅ Útil para tracking
+      sessionId: session.id,
+      ticketIds: tickets.map((t) => t.id), // útil para el frontend
+      quantity,
     });
   } catch (error) {
     console.error("Error en buyTicket:", error);
-
-    // Rollback en caso de error
     try {
       await t.rollback();
     } catch (rollbackError) {
       console.error("Error al hacer rollback:", rollbackError);
     }
-
     return res.status(500).json({
       message: "Error creando la sesión de pago",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,

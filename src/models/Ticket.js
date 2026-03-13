@@ -17,6 +17,10 @@ const Ticket = sequelize.define("Ticket", {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  pdfUrl: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
   sold: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,

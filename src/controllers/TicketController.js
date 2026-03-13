@@ -77,7 +77,7 @@ const getUserTickets = async (req, res) => {
         order: [["createdAt", "DESC"]],
         limit,
         offset,
-      }
+      },
     );
 
     const totalPages = Math.ceil(totalTickets / limit);
@@ -99,19 +99,25 @@ const getUserTickets = async (req, res) => {
 
 const downloadTicket = async (req, res) => {
   try {
-    const { ticketId, userId } = req.query;
+    // 1. Usar req.params, no req.query — el ID va en la ruta /tickets/:ticketId/download
+    const { ticketId } = req.params;
 
     if (!ticketId) {
       return res.status(400).json({ message: "El ID del boleto es requerido" });
     }
 
-    const user = await User.findByPk(userId);
+    // 2. El usuario viene del middleware de autenticación, no del query
+    const user = await User.findByPk(req.user.id);
     if (!user) {
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
     const ticket = await Ticket.findOne({
-      where: { id: ticketId, buyerEmail: user.email, sold: true },
+      where: {
+        id: ticketId,
+        buyerEmail: user.email,
+        sold: true,
+      },
       include: [
         {
           model: Event,
@@ -126,22 +132,18 @@ const downloadTicket = async (req, res) => {
         .status(404)
         .json({ message: "Boleto no encontrado o evento expirado" });
     }
-    const url = `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticket.id}`;
 
-    // Obtener la URL del PDF desde S3
-    const pdfUrl = await getS3Url(url);
-
-    if (!pdfUrl) {
-      return res
-        .status(404)
-        .json({ message: "Archivo del boleto no encontrado en S3" });
+    // 3. Lógica lazy — solo genera si no existe aún
+    if (!ticket.pdfUrl) {
+      const pdfUrl = await generateTicketPDF(ticket);
+      await ticket.update({ pdfUrl });
     }
 
-    // Retornar la URL para descarga directa en el frontend
-    return res.status(200).json({ downloadUrl: pdfUrl });
+    // 4. Retornar URL guardada en DB
+    return res.status(200).json({ downloadUrl: ticket.pdfUrl });
   } catch (error) {
-    console.error("Error al descargar el boleto:", error);
-    res.status(500).json({ message: "Error al descargar el boleto" });
+    console.error("❌ Error al descargar el boleto:", error);
+    return res.status(500).json({ message: "Error al descargar el boleto" });
   }
 };
 
@@ -181,7 +183,7 @@ const validateTicket = async (req, res) => {
 
     // Log opcional
     console.log(
-      `Boleto validado: ${ticket.code} - ID: ${ticket.id} - ${ticket.scannedAt}`
+      `Boleto validado: ${ticket.code} - ID: ${ticket.id} - ${ticket.scannedAt}`,
     );
 
     return res.status(200).json({
@@ -221,7 +223,7 @@ const generateLinks = async (req, res) => {
 
     // ✅ CORRECCIÓN: Construir ticketUrl correctamente
     const ticketUrl = getS3Url(
-      `/${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticket.id}`
+      `/${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticket.id}`,
     );
 
     // Generar todos los links de calendario

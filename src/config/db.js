@@ -25,16 +25,14 @@ const sequelize = new Sequelize(
     //     ca: fs.readFileSync(caPath),
     //   },
     // },
-    // 🛡️ Protecciones contra desconexiones (Retry)
     retry: {
       match: [/read ECONNRESET/, /ETIMEDOUT/, /EADDRNOTAVAIL/, /ECONNREFUSED/],
-      max: 3, // Si la red parpadea un segundo, Sequelize lo intenta de nuevo solo
     },
 
     pool: {
-      max: 50, // Más capacidad para picos de tráfico
-      min: 10, // Conexiones siempre listas
-      acquire: 60000, // Se queda igual (1 minuto)
+      max: 15, // 6 tareas × 15 = 90 conexiones máx, margen seguro para db.t4g.small
+      min: 2, // no desperdicies conexiones en idle
+      acquire: 60000,
       idle: 10000,
     },
   },

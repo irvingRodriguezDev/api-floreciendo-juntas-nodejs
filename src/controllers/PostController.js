@@ -33,6 +33,21 @@ const ALLOWED_MIME_TYPES = [
   "video/mp4",
   "video/quicktime", // .mov (iPhone)
 ];
+const withDeadlockRetry = async (fn, retries = 3) => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isDeadlock = error?.parent?.code === "ER_LOCK_DEADLOCK";
+      if (isDeadlock && attempt < retries) {
+        // Espera exponencial: 100ms, 200ms, 400ms...
+        await new Promise((r) => setTimeout(r, 100 * attempt));
+        continue;
+      }
+      throw error; // Si no es deadlock o se agotaron los reintentos, relanzar
+    }
+  }
+};
 const createPost = async (req, res) => {
   const userId = req.user.id;
 
@@ -41,6 +56,8 @@ const createPost = async (req, res) => {
   const hours = parseInt(durationHours, 10); // Convierte a número
 
   const expiryDate = moment().add(hours, "hours").toDate();
+  // return console.log(expiryDate, "el expiryDate");
+
   const files = req.files || [];
   const uploadedFiles = []; // Para rollback de S3 si algo falla
 
@@ -83,44 +100,46 @@ const createPost = async (req, res) => {
     }
 
     /* 3. TRANSACCIÓN DE DB (Entrar y Salir volando) ⚡ */
-    const result = await sequelize.transaction(async (t) => {
-      // A. Crear post
-      const post = await Post.create(
-        {
+    const result = await withDeadlockRetry(() =>
+      sequelize.transaction(async (t) => {
+        // A. Crear post
+        const post = await Post.create(
+          {
+            userId,
+            title: title.trim(),
+            content: content.trim(),
+            isPinned: isPinned,
+            pinnedUntil: expiryDate,
+          },
+          { transaction: t },
+        );
+
+        // B. Sumar puntos
+        await addPoints(
           userId,
-          title: title.trim(),
-          content: content.trim(),
-          isPinned: isPinned,
-          pinnedUntil: expiryDate,
-        },
-        { transaction: t },
-      );
+          30,
+          "post_created",
+          post.id,
+          "Publicó un post",
+          t,
+        );
 
-      // B. Sumar puntos
-      await addPoints(
-        userId,
-        30,
-        "post_created",
-        post.id,
-        "Publicó un post",
-        t,
-      );
+        // C. Crear media con URLs reales
+        let createdMedia = [];
+        if (mediaToCreate.length > 0) {
+          const recordsWithId = mediaToCreate.map((m) => ({
+            ...m,
+            modelId: post.id,
+          }));
+          createdMedia = await PostMedia.bulkCreate(recordsWithId, {
+            transaction: t,
+            returning: true,
+          });
+        }
 
-      // C. Crear media con URLs reales
-      let createdMedia = [];
-      if (mediaToCreate.length > 0) {
-        const recordsWithId = mediaToCreate.map((m) => ({
-          ...m,
-          modelId: post.id,
-        }));
-        createdMedia = await PostMedia.bulkCreate(recordsWithId, {
-          transaction: t,
-          returning: true,
-        });
-      }
-
-      return { post, createdMedia };
-    });
+        return { post, createdMedia };
+      }),
+    );
 
     const { post, createdMedia } = result;
 
@@ -232,7 +251,7 @@ const getFeed = async (req, res) => {
 
     const hasSearch = Boolean(search && search.trim());
 
-    const whereCondition = hasSearch
+    const searchCondition = hasSearch
       ? {
           [Op.or]: [
             { content: { [Op.like]: `%${search}%` } },
@@ -241,63 +260,44 @@ const getFeed = async (req, res) => {
         }
       : {};
 
-    const queryOptions = {
-      where: whereCondition,
-      order: [
-        ["isPinned", "DESC"],
-        ["pinnedUntil", "DESC"],
-        ["createdAt", "DESC"],
-      ],
-      distinct: true,
-      include: [
-        {
-          model: User,
-          as: "user",
-          attributes: ["id", "name", "profileImage"],
-        },
-        {
-          // ✅ Sin separate:true — se resuelve en el JOIN principal
-          model: PostMedia,
-          as: "media",
-          order: [["order", "ASC"]],
-        },
-        {
-          model: PostComment,
-          as: "comments",
-          attributes: ["id", "content", "createdAt", "userId"],
-          // ✅ Limitar comentarios por post
-          limit: 10,
-          order: [["createdAt", "DESC"]],
-          include: [
-            {
-              // ✅ Sin separate:true
-              model: PostMedia,
-              as: "media",
-              order: [["order", "ASC"]],
-            },
-            {
-              model: User,
-              as: "user",
-              attributes: ["id", "name", "profileImage"],
-            },
-          ],
-        },
-        {
-          model: PostLike,
-          as: "likes",
-          attributes: ["userId"],
-        },
-      ],
-    };
+    const commonInclude = [
+      {
+        model: User,
+        as: "user",
+        attributes: ["id", "name", "profileImage"],
+      },
+      {
+        model: PostMedia,
+        as: "media",
+        order: [["order", "ASC"]],
+      },
+      {
+        model: PostComment,
+        as: "comments",
+        attributes: ["id", "content", "createdAt", "userId"],
+        limit: 10,
+        order: [["createdAt", "DESC"]],
+        include: [
+          {
+            model: PostMedia,
+            as: "media",
+            order: [["order", "ASC"]],
+          },
+          {
+            model: User,
+            as: "user",
+            attributes: ["id", "name", "profileImage"],
+          },
+        ],
+      },
+      {
+        model: PostLike,
+        as: "likes",
+        attributes: ["userId"],
+      },
+    ];
 
-    if (!hasSearch) {
-      queryOptions.limit = limit;
-      queryOptions.offset = offset;
-    }
-
-    const { rows, count } = await Post.findAndCountAll(queryOptions);
-
-    const posts = rows.map((post) => {
+    const formatPost = (post) => {
       const postJson = post.toJSON();
       const likedByMe = postJson.likes.some((like) => like.userId === userId);
       return {
@@ -329,7 +329,55 @@ const getFeed = async (req, res) => {
         commentsCount: postJson.comments?.length || 0,
         likesCount: postJson.likes?.length || 0,
       };
-    });
+    };
+
+    let posts = [];
+    let total = 0;
+
+    if (hasSearch) {
+      // Con búsqueda: sin paginación, sin separar fijados
+      const { rows, count } = await Post.findAndCountAll({
+        where: searchCondition,
+        order: [
+          ["isPinned", "DESC"],
+          ["pinnedUntil", "DESC"],
+          ["createdAt", "DESC"],
+        ],
+        distinct: true,
+        include: commonInclude,
+      });
+      posts = rows.map(formatPost);
+      total = count;
+    } else {
+      // ✅ Página 1: incluir fijados al inicio
+      // ✅ Páginas > 1: solo posts normales (isPinned = false)
+      const pinnedRows =
+        page === 1
+          ? await Post.findAll({
+              where: { isPinned: true },
+              order: [
+                ["pinnedUntil", "DESC"],
+                ["createdAt", "DESC"],
+              ],
+              distinct: true,
+              include: commonInclude,
+            })
+          : [];
+
+      const normalWhere = { isPinned: false };
+
+      const { rows: normalRows, count } = await Post.findAndCountAll({
+        where: normalWhere,
+        order: [["createdAt", "DESC"]],
+        limit,
+        offset,
+        distinct: true,
+        include: commonInclude,
+      });
+
+      posts = [...pinnedRows.map(formatPost), ...normalRows.map(formatPost)];
+      total = count; // Solo cuenta los normales para la paginación
+    }
 
     res.json({
       success: true,
@@ -338,10 +386,10 @@ const getFeed = async (req, res) => {
         ? {}
         : {
             pagination: {
-              total: count,
+              total,
               page,
               limit,
-              totalPages: Math.ceil(count / limit),
+              totalPages: Math.ceil(total / limit),
             },
           }),
     });

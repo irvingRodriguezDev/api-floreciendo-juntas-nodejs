@@ -152,62 +152,51 @@ const cancelSubscription = async (req, res) => {
 
 const reactivateSubscription = async (req, res) => {
   try {
-    const { userId } = req.body;
+    const userId = req.user.id; // ✅ Siempre del token
 
-    // 1. Buscamos la suscripción que está activa pero marcada para cancelarse (will_cancel_at != null)
     const subscription = await Subscription.findOne({
       where: {
         userId,
-        status: "active", // Solo podemos reactivar si aún no ha llegado la fecha de corte definitiva
+        status: "active",
+        will_cancel_at: { [Op.ne]: null }, // ✅ Query más precisa
       },
     });
 
-    // Validación: Si no hay suscripción o no tiene una fecha de cancelación programada
-    if (!subscription || !subscription.will_cancel_at) {
+    if (!subscription) {
       return res.status(400).json({
         message: "No tienes una cancelación programada para reactivar.",
       });
     }
 
-    // 2. Quitamos la instrucción de cancelar en Stripe (cancel_at_period_end: false)
-    // Esto reactiva el cobro automático para el siguiente ciclo.
     const stripeResponse = await stripe.subscriptions.update(
       subscription.stripe_subscription_id,
       { cancel_at_period_end: false },
     );
 
-    // 3. Extraemos la fecha del próximo cobro desde Stripe
-    // Stripe devuelve segundos (unix), Moment lo convierte a objeto Date de JS
     const nextRenewalDate = moment
       .unix(stripeResponse.current_period_end)
       .toDate();
 
-    // 4. Actualizamos nuestra Base de Datos local
     await subscription.update({
       status: "active",
-      will_cancel_at: null, // Limpiamos la fecha de cancelación
-      next_renewal: nextRenewalDate, // Sincronizamos la fecha del próximo cobro
-      ended_at: null, // Nos aseguramos de que no haya fecha de fin
+      will_cancel_at: null,
+      next_renewal: nextRenewalDate,
+      ended_at: null,
     });
 
-    // 5. Respuesta al cliente con formato amigable
     return res.status(200).json({
       message:
         "¡Membresía reactivada con éxito! Tu acceso continuará sin interrupciones.",
-      next_billing_date: moment(nextRenewalDate).format("LL"), // Ejemplo: "18 de febrero de 2026"
+      next_billing_date: moment(nextRenewalDate).format("LL"),
     });
   } catch (error) {
-    console.error("❌ Error al reactivar:", error.message);
+    console.error("❌ Error al reactivar:", error);
 
-    // Manejo de error específico: Si la suscripción ya pasó a estado 'canceled' en Stripe
-    // mientras el usuario intentaba reactivarla.
-    if (
-      error.message.includes("not alterable") ||
-      error.code === "resource_missing"
-    ) {
+    if (error.type === "StripeInvalidRequestError") {
+      // ✅ Error real de Stripe
       return res.status(400).json({
         message:
-          "La suscripción ya ha expirado o no es válida para reactivación. Por favor, adquiere un nuevo plan.",
+          "La suscripción ya ha expirado o no es válida. Por favor, adquiere un nuevo plan.",
       });
     }
 

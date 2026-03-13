@@ -2,10 +2,9 @@ const moment = require("moment-timezone");
 
 /**
  * 📅 Genera enlaces para agregar evento a diferentes calendarios
+ * Ya no recibe ticketUrl ni ticketId — el correo es solo confirmación de compra
  */
-const generateCalendarLinks = (event, ticketUrl, ticketId) => {
-  const moment = require("moment-timezone");
-
+const generateCalendarLinks = (event) => {
   // ✅ Fechas en México para Google Calendar & ICS
   const startDateLocal = moment(event.startDate)
     .tz("America/Mexico_City")
@@ -43,39 +42,40 @@ const generateCalendarLinks = (event, ticketUrl, ticketId) => {
 
   const title = encodeURIComponent(event.title);
   const location = encodeURIComponent(event.location || "Por confirmar");
+
+  // ✅ Descripción sin ticketUrl — solo info del evento
   const description = encodeURIComponent(
-    `${cleanDescription}\n\nTu boleto: ${ticketUrl}\n\n Por favor presenta tu boleto al ingresar al evento.`
+    `${cleanDescription}\n\nRecuerda descargar tu boleto desde tu perfil antes del evento.`,
   );
 
-  // ✅ URL del backend asegurada en HTTPS
   const backendUrl = (
     process.env.BACKEND_URL || "https://api.floreciendojuntas.com"
   ).replace(/\/$/, "");
 
-  const icsDownloadUrl = `${backendUrl}/api/events/${event.id}/${ticketId}/calendar`;
+  // ✅ ICS apunta al evento general, no a un ticket individual
+  const icsDownloadUrl = `${backendUrl}/api/events/${event.id}/calendar`;
 
   return {
-    // ✅ Google Calendar
     google: `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startDateLocal}/${endDateLocal}&details=${description}&location=${location}&ctz=America/Mexico_City`,
-
-    // ✅ Apple Calendar / iOS — usa webcal:// para abrir la app directament
-    apple: `webcal://${backendUrl.replace(/^https?:\/\//, "")}/api/events/${event.id}/${ticketId}/calendar`,
-
-    // ✅ Outlook.com + App de escritori
+    apple: `webcal://${backendUrl.replace(/^https?:\/\//, "")}/api/events/${event.id}/calendar`,
     outlook: `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${startDateUTC}&enddt=${endDateUTC}&body=${description}&location=${location}&path=/calendar/action/compose&rru=addevent`,
-
-    // ✅ Yahoo Calendar
     yahoo: `https://calendar.yahoo.com/?v=60&title=${title}&st=${startDateUTC}&et=${endDateUTC}&desc=${description}&in_loc=${location}`,
-
-    // ✅ Descarga directa del .ics
     ics: icsDownloadUrl,
   };
 };
 
+const LOGOS = {
+  google: `${process.env.AWS_CDN_URL}/production/statics/logo-google-calendar.png`,
+  outlook: `${process.env.AWS_CDN_URL}/production/statics/logo-outlook-calendar.avif`,
+  apple: `${process.env.AWS_CDN_URL}/production/statics/logo-apple-calendar.png`,
+  yahoo: `${process.env.AWS_CDN_URL}/production/statics/logo-yahoo-calendar.png`,
+  ics: `${process.env.AWS_CDN_URL}/production/statics/logo-isc-calendar.png`,
+};
+
 /**
- * 📄 Genera archivo .ics para Apple Calendar, Outlook Desktop, etc.
+ * 📄 Genera archivo .ics — sin ticketUrl ni ticketId
  */
-const generateICSFile = (event, ticketUrl, ticketId) => {
+const generateICSFile = (event) => {
   const startDate = moment(event.startDate)
     .tz("America/Mexico_City")
     .format("YYYYMMDDTHHmmss");
@@ -104,19 +104,19 @@ const generateICSFile = (event, ticketUrl, ticketId) => {
       .replace(/,/g, "\\,")
       .replace(/\n/g, "\\n");
 
-  let ics = `BEGIN:VCALENDAR
+  const ics = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Tu Empresa//Ticket System//ES
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
 X-WR-TIMEZONE:America/Mexico_City
 BEGIN:VEVENT
-UID:ticket-${ticketId}@tuempresa.com
+UID:event-${event.id}@floreciendojuntas.com
 DTSTAMP:${now}Z
 DTSTART;TZID=America/Mexico_City:${startDate}
 DTEND;TZID=America/Mexico_City:${endDate}
 SUMMARY:${escapeICS(event.title)}
-DESCRIPTION:${escapeICS(cleanDescription)}\\n\\n Tu boleto: ${ticketUrl}
+DESCRIPTION:${escapeICS(cleanDescription)}\\n\\nRecuerda descargar tu boleto desde tu perfil antes del evento.
 LOCATION:${escapeICS(event.location || "Por confirmar")}
 STATUS:CONFIRMED
 SEQUENCE:0
@@ -127,65 +127,123 @@ END:VCALENDAR`;
 };
 
 /**
- * 💾 Guarda archivo ICS y lo sube a S3
+ * 💾 Guarda archivo ICS en S3 — sin ticketId, clave por evento
  */
-const saveICSToS3 = async (event, ticketUrl, uploadToS3, ticketId) => {
-  const icsContent = generateICSFile(event, ticketUrl);
+const saveICSToS3 = async (event, _unused, uploadToS3) => {
+  const icsContent = generateICSFile(event);
 
   const icsFileObject = {
-    originalname: `evento_${event.id}_ticket_${ticketId}.ics`,
+    originalname: `evento_${event.id}.ics`,
     buffer: Buffer.from(icsContent, "utf-8"),
     mimetype: "text/calendar",
   };
 
-  const s3Key = await uploadToS3("calendar-events", icsFileObject, ticketId);
+  // Clave por evento — se reutiliza si se llama varias veces
+  const s3Key = await uploadToS3("calendar-events", icsFileObject, event.id);
   return s3Key;
 };
 
 /**
- * 📧 Genera HTML para botones de calendario en email
+ * 📧 Genera HTML para botones de calendario en email — sin cambios
  */
 const generateCalendarButtonsHTML = (calendarLinks) => {
   return `
-    <div style="margin: 30px 0; text-align: center;">
-      <h3 style="color: #374151; margin-bottom: 15px;">📅 Agregar a tu calendario</h3>
-      <div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">
+    <div style="margin: 32px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 420px; margin: 0 auto;">
+        <tr>
+          <!-- Google -->
+          <td width="50%" style="padding: 5px;">
+            <a href="${calendarLinks.google}" target="_blank" style="display: block; text-decoration: none; background: #ffffff; border: 1px solid #f0e0e8; border-radius: 12px; padding: 14px 16px; text-align: left;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td width="32" valign="middle">
+                    <img src="${LOGOS.google}" width="22" height="22" alt="Google Calendar" style="display:block; border:0;">
+                  </td>
+                  <td valign="middle" style="padding-left: 10px;">
+                    <span style="font-size: 12px; font-weight: 500; color: #2d1a24; font-family: 'DM Sans', sans-serif; display: block; line-height: 1;">Google</span>
+                    <span style="font-size: 10px; color: #b08090; font-family: 'DM Sans', sans-serif;">Calendar</span>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
 
-        <a href="${calendarLinks.google}" 
-           target="_blank"
-           style="background: #4285f4; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          📅 Google Calendar
-        </a>
+          <!-- Outlook -->
+          <td width="50%" style="padding: 5px;">
+            <a href="${calendarLinks.outlook}" target="_blank" style="display: block; text-decoration: none; background: #ffffff; border: 1px solid #f0e0e8; border-radius: 12px; padding: 14px 16px; text-align: left;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td width="32" valign="middle">
+                    <img src="${LOGOS.outlook}" width="22" height="22" alt="Outlook Calendar" style="display:block; border:0;">
+                  </td>
+                  <td valign="middle" style="padding-left: 10px;">
+                    <span style="font-size: 12px; font-weight: 500; color: #2d1a24; font-family: 'DM Sans', sans-serif; display: block; line-height: 1;">Outlook</span>
+                    <span style="font-size: 10px; color: #b08090; font-family: 'DM Sans', sans-serif;">Microsoft</span>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
+        </tr>
 
-        <a href="${calendarLinks.outlook}" 
-           target="_blank"
-           style="background: #0078d4; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          📧 Outlook
-        </a>
+        <tr>
+          <!-- Apple -->
+          <td width="50%" style="padding: 5px;">
+            <a href="${calendarLinks.apple}" style="display: block; text-decoration: none; background: #ffffff; border: 1px solid #f0e0e8; border-radius: 12px; padding: 14px 16px; text-align: left;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td width="32" valign="middle">
+                    <img src="${LOGOS.apple}" width="22" height="22" alt="Apple Calendar" style="display:block; border:0;">
+                  </td>
+                  <td valign="middle" style="padding-left: 10px;">
+                    <span style="font-size: 12px; font-weight: 500; color: #2d1a24; font-family: 'DM Sans', sans-serif; display: block; line-height: 1;">Apple</span>
+                    <span style="font-size: 10px; color: #b08090; font-family: 'DM Sans', sans-serif;">Calendar</span>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
 
-        <a href="${calendarLinks.yahoo}" 
-           target="_blank"
-           style="background: #6001d2; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          🟣 Yahoo
-        </a>
+          <!-- Yahoo -->
+          <td width="50%" style="padding: 5px;">
+            <a href="${calendarLinks.yahoo}" target="_blank" style="display: block; text-decoration: none; background: #ffffff; border: 1px solid #f0e0e8; border-radius: 12px; padding: 14px 16px; text-align: left;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td width="32" valign="middle">
+                    <img src="${LOGOS.yahoo}" width="22" height="22" alt="Yahoo Calendar" style="display:block; border:0;">
+                  </td>
+                  <td valign="middle" style="padding-left: 10px;">
+                    <span style="font-size: 12px; font-weight: 500; color: #2d1a24; font-family: 'DM Sans', sans-serif; display: block; line-height: 1;">Yahoo</span>
+                    <span style="font-size: 10px; color: #b08090; font-family: 'DM Sans', sans-serif;">Calendar</span>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
+        </tr>
 
-        <!-- Apple Calendar (abre calendarios en iOS/macOS) -->
-        <a href="${calendarLinks.apple}"
-           style="background: #000000; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          🍎 Apple Calendar
-        </a>
-
-        <!-- Descarga directa ICS universal -->
-        <a href="${calendarLinks.ics}"
-           style="background: #4b5563; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          📥 Descargar .ICS
-        </a>
-
-      </div>
-
-      <p style="color: #6b7280; font-size: 12px; margin-top: 15px;">
-        Selecciona tu calendario favorito o descarga el archivo ICS.
-      </p>
+        <!-- ICS full width -->
+        <tr>
+          <td colspan="2" style="padding: 5px;">
+            <a href="${calendarLinks.ics}" style="display: block; text-decoration: none; background: #fdf6f9; border: 1px dashed #f3b9cd; border-radius: 12px; padding: 14px 20px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td width="32" valign="middle">
+                    <img src="${LOGOS.ics}" width="22" height="22" alt="ICS" style="display:block; border:0;">
+                  </td>
+                  <td valign="middle" style="padding-left: 10px;">
+                    <span style="font-size: 12px; font-weight: 500; color: #2d1a24; font-family: 'DM Sans', sans-serif;">Descargar archivo .ICS</span>
+                    <span style="font-size: 10px; color: #b08090; font-family: 'DM Sans', sans-serif; display: block;">Compatible con cualquier app de calendario</span>
+                  </td>
+                  <td valign="middle" align="right">
+                    <span style="font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #ec4899; font-family: 'DM Sans', sans-serif; font-weight: 500;">Universal</span>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 };

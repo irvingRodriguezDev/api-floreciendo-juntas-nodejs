@@ -155,14 +155,13 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
 
         await dbSub.update({
           status: status,
-          next_renewal: isCancelling
-            ? null
-            : stripePeriodEnd
-              ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
-              : null,
+          next_renewal: stripePeriodEnd // ✅ Siempre guarda la fecha
+            ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
+            : null,
           will_cancel_at: data.cancel_at
             ? moment.unix(data.cancel_at).toDate()
             : null,
+          ended_at: isCancelling ? dbSub.ended_at : null, // ✅ Limpia si reactiva
         });
 
         if (status === "active") {
@@ -224,68 +223,106 @@ const handleTicketStripeWebhook = async (req, res) => {
 
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, ticketEndpointSecret);
-
     console.log("🎟 Evento recibido TICKET:", event.type);
   } catch (err) {
+    console.error("❌ Firma inválida:", err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  const session = event.data.object;
-
-  // 🚫 FIREWALL → Blindaje absoluto del flujo
-  if (session.metadata?.flow !== "VENTA_TICKET") {
-    console.log("🔒 Evento ignorado (no es ticket)");
-    return res.json({ received: true });
-  }
-
-  // 🚫 NO debe ser suscripción
-  if (session.mode !== "payment") {
-    console.log("🔒 No es pago único, ignorado.");
-    return res.json({ received: true });
-  }
-
-  // SOLO queremos este evento
   if (event.type !== "checkout.session.completed") {
     console.log("ℹ️ Evento ignorado:", event.type);
     return res.json({ received: true });
   }
 
+  const session = event.data.object;
+
+  if (session.metadata?.flow !== "VENTA_TICKET") {
+    console.log("🔒 Evento ignorado (no es ticket)");
+    return res.json({ received: true });
+  }
+
+  if (session.mode !== "payment") {
+    console.log("🔒 No es pago único, ignorado.");
+    return res.json({ received: true });
+  }
+
+  const { ticketIds, eventId, buyerEmail, buyerName } = session.metadata ?? {};
+
+  if (!ticketIds || !eventId || !buyerEmail) {
+    console.error("❌ Metadata incompleta:", session.metadata);
+    return res.status(400).json({ error: "Metadata incompleta" });
+  }
+
+  const ids = ticketIds.split(",").map(Number);
+  const t = await sequelize.transaction();
+
   try {
-    const { ticketId, eventId, buyerEmail, buyerName } = session.metadata;
+    const tickets = await Ticket.findAll({
+      where: { id: ids, sold: false },
+      lock: t.LOCK.UPDATE, // ← corregido también
+      transaction: t,
+    });
 
-    const ticket = await Ticket.findByPk(ticketId);
-
-    if (!ticket || ticket.sold) {
-      console.log("⚠️ Ticket ya vendido o no existe");
+    if (tickets.length === 0) {
+      await t.rollback();
+      console.log("⚠️ Tickets ya procesados (idempotente)");
       return res.json({ received: true });
     }
 
-    ticket.sold = true;
-    ticket.reserved = false;
-    ticket.reservation_expires_at = null;
-    await ticket.save();
+    // ✅ Marcar como vendidos
+    await Promise.all(
+      tickets.map((ticket) =>
+        ticket.update(
+          {
+            sold: true,
+            reserved: false,
+            reservation_expires_at: null,
+            buyerName,
+            buyerEmail,
+            stripeSessionId: session.id,
+          },
+          { transaction: t },
+        ),
+      ),
+    );
 
-    const evento = await Event.findByPk(eventId);
-    const usuario = await User.findOne({ where: { email: buyerEmail } });
+    await t.commit();
+    console.log(`🎉 ${tickets.length} ticket(s) vendidos: #${ids.join(", #")}`);
 
-    await sendTicketEmail(ticket, evento, usuario);
+    // ✅ Datos del evento y usuario DESPUÉS del commit
+    const [evento, usuario] = await Promise.all([
+      Event.findByPk(eventId),
+      User.findOne({ where: { email: buyerEmail } }),
+    ]);
 
+    // ✅ UN solo correo de confirmación
+    try {
+      await sendTicketEmail(
+        tickets,
+        evento,
+        usuario ?? { email: buyerEmail, name: buyerName },
+      );
+    } catch (emailErr) {
+      console.error("⚠️ Email falló, tickets ya vendidos:", emailErr);
+    }
+
+    // ✅ Socket
     if (req.io) {
       req.io.emit("ticketSold", {
-        ticketId,
+        ticketIds: ids,
         eventId,
         buyerName,
+        quantity: ids.length,
       });
     }
 
-    console.log(`🎉 Ticket vendido #${ticket.id}`);
-    res.json({ received: true });
+    return res.json({ received: true });
   } catch (err) {
+    await t.rollback();
     console.error("💥 Error ticket webhook:", err);
-    res.status(500).json({ error: "Internal error" });
+    return res.status(500).json({ error: "Internal error" });
   }
 };
-
 /*----------------------------
   🛍️ Webhook: PAGOS DE ÓRDENES (Salón)
   (Espera metadata: { orderId, type: 'initial'|'partial' })
