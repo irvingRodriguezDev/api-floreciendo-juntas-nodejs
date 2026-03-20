@@ -4,6 +4,7 @@ const {
   createIvsChannel,
   deleteIvsChannel,
   checkStreamIsLive,
+  getStreamViewers,
 } = require("../services/awsIvsService");
 const { Op } = require("sequelize");
 const { Live, User, Notifications, NotificationToken } = require("../models");
@@ -14,6 +15,7 @@ const { getIO } = require("../socket");
 const {
   sendPushNotificationMulticast,
 } = require("../services/sendPushNotification");
+const { startPoller, stopPoller } = require("../services/livePoller");
 const nowCdmx = () => {
   return moment().tz("America/Mexico_City");
 };
@@ -394,7 +396,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
     const minTime = now.clone().subtract(30, "minutes").toDate();
     const maxTime = now.clone().add(15, "minutes").toDate();
 
-    // 1. Encontrar el Live (Rápido)
+    // 1. Encontrar el Live programado más próximo al rango de tiempo
     const live = await Live.findOne({
       where: {
         aws_channel_arn: channelArn,
@@ -403,19 +405,20 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           [Op.between]: [minTime, maxTime],
         },
       },
-      order: [["start_time", "ASC"]], // el más próximo
+      order: [["start_time", "ASC"]],
     });
 
+    // Guard: si no existe o ya tiene un stream asignado, ignorar
     if (!live || live.current_stream_id) return;
 
-    // 2. Actualizar estado (Atómico)
+    // 2. Actualizar estado (atómico)
     await live.update({
       status: "live",
       stream_started_at: now.toDate(),
       current_stream_id: streamId,
     });
 
-    // 3. Emitir por Socket (Para los que ya están en la app)
+    // 3. Emitir evento socket a todos los clientes conectados
     const io = getIO();
     io.emit("live_started", {
       liveId: live.id,
@@ -423,10 +426,14 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       startedAt: now.toISOString(),
     });
 
-    // 4. NOTIFICACIONES EN SEGUNDO PLANO (Fire and Forget) 🚀
+    // 4. Arrancar el poller de viewers para este live
+    //    A partir de aquí el servidor consulta IVS cada 15s y pushea a la sala
+    startPoller(io, live.id, channelArn);
+
+    // 5. Notificaciones push en segundo plano (fire & forget)
     (async () => {
       try {
-        console.log("Entra el enviar notificaciones");
+        console.log(`📣 Enviando notificaciones → live:${live.id}`);
 
         // Traemos usuarios y tokens en UNA SOLA consulta (JOIN)
         const usersWithTokens = await User.findAll({
@@ -451,7 +458,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           : "Un live acaba de comenzar";
         const url = `/detalle-live/${live.id}`;
 
-        // A. Historial en DB (Bulk Insert - 1 sola query)
+        // A. Historial en DB (bulk insert — 1 sola query)
         const notificationsData = usersWithTokens.map((u) => ({
           userId: u.id,
           actorId: live.userId || null,
@@ -464,13 +471,12 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
         }));
         await Notifications.bulkCreate(notificationsData);
 
-        // B. Recolectar tokens y enviar Multicast
+        // B. Recolectar tokens y enviar multicast a Firebase (bloques de 500)
         const allTokens = usersWithTokens.flatMap((u) =>
           (u.NotificationTokens || []).map((t) => t.token),
         );
 
         if (allTokens.length > 0) {
-          // Bloques de 500 para Firebase
           for (let i = 0; i < allTokens.length; i += 500) {
             const batch = allTokens.slice(i, i + 500);
             await sendPushNotificationMulticast({
@@ -478,11 +484,13 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
               title,
               body,
               data: { type: "live", liveId: String(live.id), url },
-            }).catch((e) => console.error("Error batch push live:", e));
+            }).catch((e) => console.error("❌ Error batch push live:", e));
           }
         }
+
+        console.log(`✅ Notificaciones enviadas → live:${live.id}`);
       } catch (err) {
-        console.error("⚠️ Error notificaciones live background:", err);
+        console.error("⚠️  Error notificaciones live background:", err);
       }
     })();
 
@@ -504,31 +512,29 @@ const handleStreamEnd = async ({ channelArn }) => {
     });
 
     if (!live) {
-      console.warn("⚠️ No hay live activo para finalizar");
+      console.warn("⚠️  No hay live activo para finalizar");
       return;
     }
 
-    // 1️⃣ Actualizar estado del live
+    // 1. Actualizar estado del live
     await live.update({
       status: "ended",
       stream_ended_at: now.toDate(),
       current_stream_id: null,
     });
 
-    // 2️⃣ Emitir evento SOCKET 🔥
-    const io = getIO();
+    // 2. Detener el poller — ya no hay nada que consultar en IVS
+    stopPoller(live.id);
 
+    // 3. Emitir evento socket a todos los clientes
+    const io = getIO();
     io.emit("live_ended", {
       liveId: live.id,
       endedAt: now.toISOString(),
     });
 
     console.log(`📡 Socket live_ended emitido → live:${live.id}`);
-
-    // 3️⃣ Cleanup opcional
-    // await live.destroy();
-
-    console.log(`🔴 Live #${live.id} finalizado correctamente`);
+    console.log(`🔴 Live #${live.id} finalizado correctamente.`);
   } catch (error) {
     console.error("❌ Error en handleStreamEnd:", error);
   }
@@ -544,9 +550,12 @@ const handleStreamFailure = async ({ channelArn, failedAt }) => {
     });
 
     if (!live) {
-      console.warn("⚠️ No hay live activo para marcar error");
+      console.warn("⚠️  No hay live activo para marcar error");
       return;
     }
+
+    // Detener el poller también en caso de fallo
+    stopPoller(live.id);
 
     await live.update({
       status: "error",
@@ -554,9 +563,56 @@ const handleStreamFailure = async ({ channelArn, failedAt }) => {
       current_stream_id: null,
     });
 
-    console.log(`⚠️ Live #${live.id} marcado como ERROR`);
+    // Notificar a los clientes que el stream falló
+    const io = getIO();
+    io.emit("live_error", {
+      liveId: live.id,
+      failedAt,
+    });
+
+    console.log(`⚠️  Live #${live.id} marcado como ERROR.`);
   } catch (error) {
     console.error("❌ Error en handleStreamFailure:", error);
+  }
+};
+
+const getLiveViewers = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const live = await Live.findByPk(id, {
+      attributes: ["id", "title", "status", "aws_channel_arn"],
+    });
+
+    if (!live) {
+      return res.status(404).json({ message: "Live no encontrado" });
+    }
+
+    if (live.status !== "live") {
+      return res.json({
+        liveId: live.id,
+        viewers: 0,
+        isLive: false,
+        status: live.status,
+      });
+    }
+
+    const streamData = await getStreamViewers(live.aws_channel_arn);
+
+    return res.json({
+      liveId: live.id,
+      viewers: streamData.viewers,
+      isLive: streamData.isLive,
+      health: streamData.health,
+      startedAt: streamData.startedAt,
+      status: live.status,
+    });
+  } catch (error) {
+    console.error("❌ Error al obtener viewers:", error);
+    return res.status(500).json({
+      message: "Error al obtener viewers",
+      error: error.message,
+    });
   }
 };
 
@@ -570,4 +626,5 @@ module.exports = {
   updateStatus,
   deleteLive,
   handleIvsWebhook,
+  getLiveViewers,
 };

@@ -145,10 +145,31 @@ const getChannelInfo = async (channelArn) => {
   }
 };
 
+const getStreamViewers = async (channelArn) => {
+  try {
+    const command = new GetStreamCommand({ channelArn });
+    const response = await ivsClient.send(command);
+
+    return {
+      viewers: response.stream?.viewerCount ?? 0,
+      isLive: response.stream?.state === "LIVE",
+      health: response.stream?.health, // HEALTHY | STARVING | UNKNOWN
+      startedAt: response.stream?.startTime ?? null,
+    };
+  } catch (error) {
+    // Si no hay stream activo, IVS lanza ChannelNotBroadcasting
+    if (error.name === "ChannelNotBroadcasting") {
+      return { viewers: 0, isLive: false, health: null, startedAt: null };
+    }
+    throw error;
+  }
+};
+
 module.exports = {
   getIvsChannelConfig,
   createIvsChannel,
   deleteIvsChannel,
   checkStreamIsLive,
   getChannelInfo,
+  getStreamViewers,
 };

@@ -1,30 +1,48 @@
+// liveSocket.js
+// Gestiona los eventos de Socket.io para el módulo de lives:
+//   - join-live / leave-live
+//   - live_app_viewers  (usuarios conectados al chat, instantáneo, gratis)
+//   - live_viewer_count (viewers reales de IVS, viene del livePoller cada 15s)
+//   - Comentarios: load, send, delete
+
 const { LiveComment } = require("../models");
 
-// Cache en memoria para evitar saturar la DB en reconexiones masivas
-const commentsCache = new Map();
+// ─────────────────────────────────────────────
+// Cache de comentarios en memoria
+// Evita saturar la DB en reconexiones masivas
+// ─────────────────────────────────────────────
+const commentsCache = new Map(); // liveId → { data, timestamp }
 const CACHE_TTL = 30000; // 30 segundos
 
-module.exports = (io, socket) => {
-  /**
-   * FUNCIÓN AUXILIAR: Actualiza el conteo de espectadores para una sala específica.
-   * Se comunica con la memoria de Socket.io (RAM), no con la Base de Datos.
-   */
-  const updateViewerCount = (roomName) => {
-    const clients = io.sockets.adapter.rooms.get(roomName);
-    const count = clients ? clients.size : 0;
-    io.to(roomName).emit("live_viewer_count", count);
-  };
+/**
+ * Emite el conteo de sockets conectados a la sala.
+ * Este número representa "cuántos usuarios de la app están en el chat",
+ * no el total de viewers del stream (eso lo maneja livePoller → live_viewer_count).
+ *
+ * @param {import("socket.io").Server} io
+ * @param {string} roomName  — formato: "live_<liveId>"
+ */
+const emitAppViewers = (io, roomName) => {
+  const clients = io.sockets.adapter.rooms.get(roomName);
+  const count = clients ? clients.size : 0;
+  const liveId = roomName.replace("live_", "");
+  io.to(roomName).emit("live_app_viewers", { liveId, count });
+};
 
-  // --- EVENTO: UNIRSE AL LIVE ---
+// ─────────────────────────────────────────────
+// Handler principal — se registra por cada socket conectado
+// ─────────────────────────────────────────────
+module.exports = (io, socket) => {
+  // ── JOIN LIVE ──────────────────────────────
   socket.on("join-live", async (liveId) => {
     try {
       const roomName = `live_${liveId}`;
       socket.join(roomName);
 
-      // 1. Notificar el nuevo conteo a todos en la sala
-      updateViewerCount(roomName);
+      // Notificar a todos el nuevo conteo de usuarios en el chat
+      emitAppViewers(io, roomName);
 
-      // 2. Lógica de Comentarios con Cache
+      // Cargar comentarios recientes (con cache)
       const cached = commentsCache.get(liveId);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         return socket.emit("load_comments", cached.data);
@@ -37,9 +55,9 @@ module.exports = (io, socket) => {
         limit: 35,
       });
 
+      // Reordenar de más antiguo a más nuevo para mostrar en el chat
       const ordered = comments.reverse();
 
-      // Guardar en cache para la siguiente persona que entre
       commentsCache.set(liveId, {
         data: ordered,
         timestamp: Date.now(),
@@ -52,12 +70,19 @@ module.exports = (io, socket) => {
     }
   });
 
-  // --- EVENTO: ENVIAR COMENTARIO ---
+  // ── LEAVE LIVE (salida voluntaria) ─────────
+  socket.on("leave-live", (liveId) => {
+    const roomName = `live_${liveId}`;
+    socket.leave(roomName);
+    emitAppViewers(io, roomName);
+  });
+
+  // ── SEND COMMENT ───────────────────────────
   socket.on("send_comment", async ({ liveId, message }) => {
     try {
       if (!message || !liveId) return;
 
-      // socket.user viene de tu middleware socketAuth.js
+      // socket.user viene del middleware socketAuth.js
       const comment = await LiveComment.create({
         live_id: liveId,
         user_id: socket.user.id,
@@ -68,20 +93,18 @@ module.exports = (io, socket) => {
       // Invalidar cache para que el próximo que entre vea el comentario nuevo
       commentsCache.delete(liveId);
 
-      // Emitir el comentario a todos en la sala del live
       io.to(`live_${liveId}`).emit("new_comment", comment);
     } catch (err) {
       console.error("❌ Error al enviar comentario:", err);
     }
   });
 
-  // --- EVENTO: ELIMINAR COMENTARIO (Solo Admins) ---
+  // ── DELETE COMMENT (solo admins) ───────────
   socket.on("delete_comment", async ({ liveId, message_id }) => {
     try {
       if (!liveId || !message_id) return;
 
-      // Verificación de rol (asumiendo que socketAuth define socket.user.role)
-      const isAdmin = socket.user.role === "admin";
+      const isAdmin = socket.user?.role === "admin";
       if (!isAdmin) return;
 
       const comment = await LiveComment.findOne({
@@ -100,24 +123,46 @@ module.exports = (io, socket) => {
     }
   });
 
-  // --- EVENTO: SALIDA VOLUNTARIA ---
-  socket.on("leave-live", (liveId) => {
-    const roomName = `live_${liveId}`;
-    socket.leave(roomName);
-    updateViewerCount(roomName);
-  });
-
-  // --- EVENTO: DESCONEXIÓN (Cerrar pestaña o pérdida de red) ---
+  // ── DISCONNECTING (cierra tab o pierde red) ─
+  // En este punto el socket TODAVÍA está en las salas,
+  // por eso restamos 1 manualmente para que el conteo sea correcto.
   socket.on("disconnecting", () => {
-    // Revisamos todas las salas antes de que el socket se destruya
     socket.rooms.forEach((room) => {
-      if (room.startsWith("live_")) {
-        // IMPORTANTE: En este punto el socket todavía está en la sala,
-        // por lo que el conteo bajará automáticamente un instante después.
-        // Forzamos una actualización inmediata para los que se quedan:
-        const currentSize = io.sockets.adapter.rooms.get(room)?.size || 1;
-        io.to(room).emit("live_viewer_count", Math.max(0, currentSize - 1));
-      }
+      if (!room.startsWith("live_")) return;
+
+      const currentSize = io.sockets.adapter.rooms.get(room)?.size ?? 1;
+      const liveId = room.replace("live_", "");
+
+      io.to(room).emit("live_app_viewers", {
+        liveId,
+        count: Math.max(0, currentSize - 1),
+      });
     });
   });
 };
+
+// ─────────────────────────────────────────────
+// GUÍA DE EVENTOS — referencia para el cliente
+// ─────────────────────────────────────────────
+//
+// Cliente EMITE:
+//   socket.emit("join-live",      liveId)
+//   socket.emit("leave-live",     liveId)
+//   socket.emit("send_comment",   { liveId, message })
+//   socket.emit("delete_comment", { liveId, message_id })   // solo admin
+//
+// Cliente ESCUCHA:
+//   socket.on("live_app_viewers",   ({ liveId, count }))
+//     → Usuarios conectados al chat en tiempo real (instantáneo)
+//
+//   socket.on("live_viewer_count",  ({ liveId, viewers, isLive, health, startedAt, updatedAt }))
+//     → Viewers reales del stream en IVS (se actualiza cada ~15s desde el servidor)
+//
+//   socket.on("load_comments",  comments[])
+//   socket.on("new_comment",    comment)
+//   socket.on("remove_comment", { id })
+//   socket.on("comments_error", { message })
+//
+//   socket.on("live_started",   { liveId, status, startedAt })
+//   socket.on("live_ended",     { liveId, endedAt })
+//   socket.on("live_error",     { liveId, failedAt })

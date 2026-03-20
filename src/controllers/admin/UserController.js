@@ -8,7 +8,7 @@ const {
   RaffleWinner,
   Address,
 } = require("../../models");
-const { getEligibleUsers } = require("../../helpers/raffle");
+const { getEligibleUsers, getTop100Pool } = require("../../helpers/raffle");
 const { Op } = require("sequelize");
 const sequelize = require("../../config/db");
 const { response } = require("express");
@@ -48,11 +48,9 @@ const runRaffleOneWinner = async (req, res) => {
     let finalResult;
 
     await sequelize.transaction(async (t) => {
-      // 1️⃣ Obtener TODOS los premios del mes ordenados
+      // ── 1. Obtener TODOS los premios del mes ordenados ──────────────────────
       const monthlyPrizes = await MonthlyPrize.findAll({
-        where: {
-          raffle_month: currentMonth,
-        },
+        where: { raffle_month: currentMonth },
         order: [["id", "ASC"]],
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -62,34 +60,25 @@ const runRaffleOneWinner = async (req, res) => {
         throw new Error("No hay premios creados este mes.");
       }
 
-      // 2️⃣ Obtener premios ya entregados
-      const awardedPrizes = await MonthlyPrize.findAll({
-        where: {
-          raffle_month: currentMonth,
-          status: "awarded",
-        },
-        transaction: t,
-      });
+      // ── 2. Obtener IDs de premios ya entregados ─────────────────────────────
+      const awardedIds = monthlyPrizes
+        .filter((p) => p.status === "awarded")
+        .map((p) => p.id);
 
-      const awardedIds = awardedPrizes.map((p) => p.id);
-
-      // 3️⃣ Obtener siguiente premio disponible por ORDEN REAL
+      // ── 3. Siguiente premio disponible (en orden de creación) ───────────────
       const prize = monthlyPrizes.find((p) => !awardedIds.includes(p.id));
 
       if (!prize) {
-        throw new Error("No hay premios disponibles para este mes.");
+        throw new Error("Todos los premios de este mes ya fueron entregados.");
       }
 
-      // 🔥 POSICIÓN REAL DEL PREMIO (1–13)
       const prizePosition =
         monthlyPrizes.findIndex((p) => p.id === prize.id) + 1;
 
-      // 4️⃣ Excluir ganadores mes actual y anterior
+      // ── 4. Excluir ganadores del mes anterior (exclusión GLOBAL) ────────────
       const winnersToExclude = await RaffleWinner.findAll({
         where: {
-          raffle_month: {
-            [Op.in]: [currentMonth, lastMonth],
-          },
+          raffle_month: { [Op.in]: [currentMonth, lastMonth] },
         },
         attributes: ["user_id"],
         raw: true,
@@ -98,39 +87,53 @@ const runRaffleOneWinner = async (req, res) => {
 
       const excludedIds = winnersToExclude.map((w) => w.user_id);
 
-      // 5️⃣ Obtener elegibles correctamente
-      const eligibleUsers = await getEligibleUsers({
-        excludeIds: excludedIds,
-        transaction: t,
-      });
-
-      if (!eligibleUsers.length) {
-        throw new Error("No hay usuarios elegibles.");
-      }
-
+      // ── 5. Seleccionar pool según isPremium ─────────────────────────────────
       let winnerUser = null;
 
-      const sortedByPoints = [...eligibleUsers].sort(
-        (a, b) => b.total_points - a.total_points,
-      );
+      if (prize.isPremium) {
+        // ────────────────────────────────────────────────────────────────────
+        // POOL PREMIUM — Top 100 por puntos del mes
+        // Sorteo EQUITATIVO: cada persona tiene la misma probabilidad.
+        // Ya ganaron su lugar en el Top 100 por mérito, el azar es parejo.
+        // ────────────────────────────────────────────────────────────────────
+        const top100 = await getTop100Pool({
+          excludeIds: excludedIds,
+          transaction: t,
+        });
 
-      const top3 = sortedByPoints.slice(0, 3);
-      const nonTop3 = sortedByPoints.slice(3);
-
-      // 🎰 PREMIOS 1–10
-      if (prizePosition <= 10) {
-        if (!nonTop3.length) {
-          throw new Error("No hay suficientes usuarios fuera del top 3.");
+        if (!top100.length) {
+          throw new Error(
+            "No hay usuarios elegibles en el Top 100 para el premio premium.",
+          );
         }
 
-        const totalTickets = nonTop3.reduce((sum, user) => {
+        const randomIndex = Math.floor(Math.random() * top100.length);
+        winnerUser = top100[randomIndex];
+      } else {
+        // ────────────────────────────────────────────────────────────────────
+        // POOL NORMAL — todos los suscritos activos
+        // Sorteo PONDERADO por puntos²: más puntos = más tickets = más chances.
+        // ────────────────────────────────────────────────────────────────────
+        const eligibleUsers = await getEligibleUsers({
+          excludeIds: excludedIds,
+          transaction: t,
+        });
+
+        if (!eligibleUsers.length) {
+          throw new Error(
+            "No hay usuarios elegibles para el sorteo de este premio.",
+          );
+        }
+
+        // Peso = puntos² (mínimo 1 para no dejar fuera a usuarios sin puntos)
+        const totalTickets = eligibleUsers.reduce((sum, user) => {
           const points = user.total_points > 0 ? user.total_points : 1;
           return sum + Math.pow(points, 2);
         }, 0);
 
         let random = Math.floor(Math.random() * totalTickets);
 
-        for (const user of nonTop3) {
+        for (const user of eligibleUsers) {
           const points = user.total_points > 0 ? user.total_points : 1;
           const tickets = Math.pow(points, 2);
 
@@ -141,20 +144,13 @@ const runRaffleOneWinner = async (req, res) => {
 
           random -= tickets;
         }
-      } else {
-        // 🏆 PREMIOS 11–13 → SOLO TOP 3
-        if (!top3.length) {
-          throw new Error("No hay usuarios en el top 3.");
-        }
-
-        winnerUser = top3[0];
       }
 
       if (!winnerUser) {
-        throw new Error("No se pudo determinar ganador.");
+        throw new Error("No se pudo determinar un ganador.");
       }
 
-      // 6️⃣ Registrar ganador
+      // ── 6. Registrar ganador y marcar premio como entregado ─────────────────
       const winnersCount = await RaffleWinner.count({
         where: { raffle_month: currentMonth },
         transaction: t,
@@ -183,6 +179,7 @@ const runRaffleOneWinner = async (req, res) => {
           id: prize.id,
           name: prize.prize_name,
           position: prizePosition,
+          isPremium: prize.isPremium,
         },
         raffle_record: createdWinner,
       };

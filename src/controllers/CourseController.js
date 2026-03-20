@@ -389,7 +389,8 @@ const getCoursesBySystem = async (req, res) => {
 //topcursos
 const getTopViewedCourses = async (req, res) => {
   try {
-    const topCourses = await CourseProgress.findAll({
+    // 1. Obtener top 10 courseIds con su conteo — query limpia sin includes
+    const topRaw = await CourseProgress.findAll({
       attributes: [
         "courseId",
         [Sequelize.fn("COUNT", Sequelize.col("userId")), "viewsCount"],
@@ -397,29 +398,43 @@ const getTopViewedCourses = async (req, res) => {
       group: ["courseId"],
       order: [[Sequelize.literal("viewsCount"), "DESC"]],
       limit: 10,
+      raw: true,
+    });
+
+    if (!topRaw.length) return res.json([]);
+
+    const courseIds = topRaw.map((r) => r.courseId);
+
+    // 2. Traer los datos completos de esos cursos
+    const courses = await Course.findAll({
+      where: { id: courseIds },
+      attributes: ["id", "title", "description"],
       include: [
         {
-          model: Course,
-          as: "course",
-          attributes: ["title", "description"],
-          include: [
-            {
-              model: ImageCourses,
-              as: "images",
-              attributes: ["s3_key"], // o cualquier columna que tengas para la imagen
-              where: { is_active: true }, // opcional si solo quieres imágenes activas
-              required: false, // si no quieres que filtre los cursos sin imagen
-            },
-          ],
+          model: ImageCourses,
+          as: "images",
+          attributes: ["s3_key"],
+          where: { is_active: true },
+          required: false,
         },
       ],
     });
-    // return res.json({ topCourses, message: "los cursos" });
-    const formatted = topCourses.map((c) => ({
-      ...c.toJSON(),
-      cover_image_url: c.course ? getS3Url(c.course.images[0].s3_key) : null,
-      title: c.course ? c.course.title : null,
-    }));
+
+    // 3. Mapear respuesta respetando el orden original del ranking
+    const courseMap = new Map(courses.map((c) => [c.id, c]));
+
+    const formatted = topRaw.map((row) => {
+      const course = courseMap.get(row.courseId);
+      const firstImage = course?.images?.[0];
+
+      return {
+        courseId: row.courseId,
+        viewsCount: Number(row.viewsCount),
+        title: course?.title ?? null,
+        description: course?.description ?? null,
+        cover_image_url: firstImage ? getS3Url(firstImage.s3_key) : null,
+      };
+    });
 
     res.json(formatted);
   } catch (error) {

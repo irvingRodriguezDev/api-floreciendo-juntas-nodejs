@@ -481,9 +481,9 @@ const buyTicket = async (req, res) => {
     }
 
     // Validar quantity
-    if (quantity < 1 || quantity > 10) {
+    if (quantity < 1 || quantity > 50) {
       await t.rollback();
-      return res.status(400).json({ message: "Cantidad inválida (1-10)" });
+      return res.status(400).json({ message: "Cantidad inválida (1-50)" });
     }
 
     // Buscar el evento

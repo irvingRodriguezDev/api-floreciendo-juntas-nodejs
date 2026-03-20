@@ -18,13 +18,13 @@ const sequelize = new Sequelize(
     logging: false,
     timezone: "-06:00",
 
-    // dialectOptions: {
-    //   ssl: {
-    //     require: true,
-    //     rejectUnauthorized: false,
-    //     ca: fs.readFileSync(caPath),
-    //   },
-    // },
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false,
+        ca: fs.readFileSync(caPath),
+      },
+    },
     retry: {
       match: [/read ECONNRESET/, /ETIMEDOUT/, /EADDRNOTAVAIL/, /ECONNREFUSED/],
     },

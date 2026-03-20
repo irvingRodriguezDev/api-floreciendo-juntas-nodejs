@@ -17,6 +17,10 @@ const MonthlyPrize = sequelize.define(
       type: DataTypes.STRING, // formato "2025-02"
       allowNull: false,
     },
+    isPremium: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
     status: {
       type: DataTypes.ENUM("available", "awarded"),
       defaultValue: "available",
@@ -25,7 +29,7 @@ const MonthlyPrize = sequelize.define(
   {
     tableName: "monthly_prizes",
     timestamps: true,
-  }
+  },
 );
 
 module.exports = MonthlyPrize;

@@ -2,10 +2,14 @@ const { MonthlyPrize } = require("../../models");
 const { format } = require("date-fns");
 const createPrize = async (req, res) => {
   try {
-    const { prize_name } = req.body;
+    const { prize_name, isPremium } = req.body;
     const raffle_month = format(new Date(), "yyyy-MM");
 
-    const prize = await MonthlyPrize.create({ prize_name, raffle_month });
+    const prize = await MonthlyPrize.create({
+      prize_name,
+      raffle_month,
+      isPremium,
+    });
 
     return res.status(201).json(prize);
   } catch (error) {

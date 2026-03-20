@@ -1,6 +1,8 @@
 const cron = require("node-cron");
-const { Notifications } = require("../models");
+const { Notifications, Live } = require("../models");
 const { Op } = require("sequelize");
+const { getStreamViewers } = require("./awsIvsService");
+const { getIO } = require("../socket");
 
 /**
  * Tarea programada para limpiar notificaciones
@@ -8,6 +10,33 @@ const { Op } = require("sequelize");
  */
 const initCronJobs = () => {
   console.log("🚀 Servicio de Cron Jobs iniciado...");
+  // ==============================
+  // Viewers en tiempo real cada 2 minutos
+  // ==============================
+  cron.schedule("*/2 * * * *", async () => {
+    try {
+      const activeLives = await Live.findAll({
+        where: { status: "live" },
+        attributes: ["id", "aws_channel_arn"],
+      });
+
+      if (!activeLives.length) return;
+
+      const io = getIO();
+
+      for (const live of activeLives) {
+        try {
+          const streamData = await getStreamViewers(live.aws_channel_arn);
+          io.to(`live_${live.id}`).emit("ivs_viewer_count", streamData.viewers);
+          console.log(`👁 Live #${live.id} → ${streamData.viewers} viewers`);
+        } catch (err) {
+          console.error(`❌ Error viewers live #${live.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("❌ Error cron viewers:", err);
+    }
+  });
 
   cron.schedule(
     "0 3 * * *",
