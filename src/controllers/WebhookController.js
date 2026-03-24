@@ -46,16 +46,20 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Idempotencia
+  // ✅ Idempotencia — ignorar eventos ya procesados
   if (await StripeEvent.findOne({ where: { event_id: event.id } }))
     return res.status(200).json({ received: true });
 
   const data = event.data.object;
-  // console.log(data.parent?.subscription_details.subscription, "la data");
 
   try {
     switch (event.type) {
+      /* ══════════════════════════════════════════════════
+       * 1. CHECKOUT COMPLETADO → Primera suscripción
+       *    Solo aplica cuando el modo es "subscription"
+       * ══════════════════════════════════════════════════ */
       case "checkout.session.completed": {
+        console.log("completed");
         if (data.mode !== "subscription") break;
 
         const existingSub = await Subscription.findOne({
@@ -63,7 +67,6 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         });
 
         if (existingSub) {
-          // Usuario ya tenía suscripción (ej: abrió dos checkouts) — solo actualizamos
           await existingSub.update({
             stripe_subscription_id: data.subscription,
             stripe_customer_id: data.customer,
@@ -77,6 +80,7 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
             stripe_customer_id: data.customer,
             status: "active",
             price_id: data.metadata.priceId,
+            subscription_type: "RECURRING",
           });
         }
 
@@ -87,18 +91,23 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         break;
       }
 
+      /* ══════════════════════════════════════════════════
+       * 2. PAGO DE RENOVACIÓN EXITOSO
+       *    billing_reason = "subscription_cycle" (renovación)
+       *    Ignoramos "subscription_create" porque ya lo
+       *    manejó checkout.session.completed
+       * ══════════════════════════════════════════════════ */
       case "invoice.payment_succeeded": {
+        console.log("succeded");
+
         if (data.billing_reason === "subscription_create") break;
 
-        // Stripe lo puede traer en diferentes lugares según la versión de la API
         const subscriptionId =
           data.subscription || data.parent?.subscription_details?.subscription;
 
-        console.log("subscriptionId resuelto:", subscriptionId);
-
         if (!subscriptionId) {
           console.warn(
-            "⚠️ invoice.payment_succeeded sin subscription_id, ignorando",
+            "⚠️ invoice.payment_succeeded sin subscriptionId, ignorando",
           );
           break;
         }
@@ -115,8 +124,11 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
           next_renewal: stripeSub.current_period_end
             ? moment.unix(stripeSub.current_period_end).tz(timezone).toDate()
             : null,
+          will_cancel_at: null, // Por si reactivó después de past_due
+          ended_at: null,
         });
 
+        // ✅ Renovación exitosa → acceso garantizado
         await User.update(
           { isSubscribed: true },
           { where: { stripe_id: data.customer } },
@@ -124,52 +136,95 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         break;
       }
 
+      /* ══════════════════════════════════════════════════
+       * 3. PAGO FALLIDO (1er intento o reintentos)
+       *    Stripe reintentará hasta 8 veces en ~1 semana.
+       *    Durante ese tiempo → mantenemos acceso (past_due).
+       *    NO quitamos isSubscribed aquí.
+       *    Stripe cancelará solo si todos los intentos fallan
+       *    y eso lo manejamos en customer.subscription.deleted
+       * ══════════════════════════════════════════════════ */
       case "invoice.payment_failed": {
         const subscriptionId =
           data.subscription || data.parent?.subscription_details?.subscription;
 
         if (!subscriptionId) {
           console.warn(
-            "⚠️ invoice.payment_failed sin subscription_id, ignorando",
+            "⚠️ invoice.payment_failed sin subscriptionId, ignorando",
           );
           break;
         }
 
-        await Subscription.update(
-          { status: "past_due" },
-          { where: { stripe_subscription_id: subscriptionId } },
+        // ✅ NUEVO: No pisar un status ya cancelado
+        const subActual = await Subscription.findOne({
+          where: { stripe_subscription_id: subscriptionId },
+        });
+
+        if (!subActual) break;
+
+        if (subActual.status === "canceled") {
+          console.log(
+            `ℹ️ Suscripción ${subscriptionId} ya cancelada, ignorando invoice.payment_failed tardío`,
+          );
+          break;
+        }
+
+        await subActual.update({ status: "past_due" });
+
+        console.log(
+          `⚠️ Pago fallido para suscripción ${subscriptionId}. Stripe reintentará automáticamente.`,
         );
         break;
       }
 
+      /* ══════════════════════════════════════════════════
+       * 4. SUSCRIPCIÓN ACTUALIZADA
+       *    Cubre: cancelación programada, reactivación,
+       *    cambio de plan, cambio de status por Stripe.
+       *
+       *    MAPA DE ACCESO:
+       *    active    → ✅ acceso
+       *    trialing  → ✅ acceso
+       *    past_due  → ✅ acceso (Stripe reintentando)
+       *    canceled  → ❌ sin acceso
+       *    unpaid    → ❌ sin acceso
+       *    incomplete_expired → ❌ sin acceso
+       * ══════════════════════════════════════════════════ */
       case "customer.subscription.updated": {
+        console.log("updated");
+
         const dbSub = await Subscription.findOne({
           where: { stripe_subscription_id: data.id },
         });
         if (!dbSub) break;
 
         const status = data.status;
-        const isCancelling = data.cancel_at_period_end;
         const stripePeriodEnd =
           data.current_period_end || data.items?.data[0]?.current_period_end;
 
         await dbSub.update({
-          status: status,
-          next_renewal: stripePeriodEnd // ✅ Siempre guarda la fecha
+          status,
+          next_renewal: stripePeriodEnd
             ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
             : null,
           will_cancel_at: data.cancel_at
-            ? moment.unix(data.cancel_at).toDate()
+            ? moment.unix(data.cancel_at).tz(timezone).toDate()
             : null,
-          ended_at: isCancelling ? dbSub.ended_at : null, // ✅ Limpia si reactiva
+          ended_at: data.cancel_at_period_end ? dbSub.ended_at : null,
         });
 
-        if (status === "active") {
+        // ✅ Estados que mantienen acceso
+        const statusConAcceso = ["active", "trialing", "past_due"];
+
+        // ✅ Estados que quitan acceso
+        const statusSinAcceso = ["canceled", "unpaid", "incomplete_expired"];
+
+        if (statusConAcceso.includes(status)) {
           await User.update(
             { isSubscribed: true },
             { where: { stripe_id: data.customer } },
           );
-        } else if (["canceled", "unpaid"].includes(status)) {
+        } else if (statusSinAcceso.includes(status)) {
           await User.update(
             { isSubscribed: false },
             { where: { stripe_id: data.customer } },
@@ -178,25 +233,27 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         break;
       }
 
+      /* ══════════════════════════════════════════════════
+       * 5. SUSCRIPCIÓN CANCELADA DEFINITIVAMENTE
+       *    Llega cuando:
+       *    - El usuario canceló y expiró el periodo pagado
+       *    - Stripe agotó todos los reintentos de cobro
+       *    → Aquí sí quitamos el acceso, sin excepción
+       * ══════════════════════════════════════════════════ */
       case "customer.subscription.deleted": {
         const sub = await Subscription.findOne({
           where: { stripe_subscription_id: data.id },
         });
-        console.log(
-          "sub encontrada:",
-          sub ? sub.stripe_subscription_id : "NO ENCONTRADA",
-        );
 
-        if (!sub) {
-          // Aun así apagamos el acceso por customer_id como fallback
-          await User.update(
-            { isSubscribed: false },
-            { where: { stripe_id: data.customer } },
-          );
-          break;
+        if (sub) {
+          await sub.update({
+            status: "canceled",
+            ended_at: new Date(),
+            will_cancel_at: null,
+            next_renewal: null, // ✅ AGREGADO
+          });
         }
 
-        await sub.update({ status: "canceled", ended_at: new Date() });
         await User.update(
           { isSubscribed: false },
           { where: { stripe_id: data.customer } },
@@ -208,7 +265,8 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
     await StripeEvent.create({ event_id: event.id, type: event.type });
     return res.status(200).json({ received: true });
   } catch (error) {
-    console.error(`❌ Error Webhook ${event.type}:`, error);
+    console.error(`❌ Error procesando webhook ${event.type}:`, error);
+    // ✅ Retornamos 500 para que Stripe reintente el webhook
     return res.status(500).send("Internal Server Error");
   }
 };

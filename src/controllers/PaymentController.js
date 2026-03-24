@@ -63,10 +63,33 @@ const crearSesionSuscripcionMensual = async (req, res) => {
 
     const customerId = await getOrCreateStripeCustomer(user);
 
-    // 1️⃣ MEJORA: Limpiamos Stripe antes de crear algo nuevo
-    await limpiarSuscripcionesPrevias(customerId);
+    // ✅ NUEVO: Verificar en Stripe si ya tiene suscripción vigente
+    const subsEnStripe = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 10,
+    });
 
-    // 2️⃣ CREAR CHECKOUT SESSION (Ya no hay riesgo de duplicados)
+    const suscripcionVigente = subsEnStripe.data.find((sub) =>
+      ["active", "trialing", "past_due"].includes(sub.status),
+    );
+
+    if (suscripcionVigente) {
+      // Si está past_due, informamos en lugar de cancelar y recrear
+      if (suscripcionVigente.status === "past_due") {
+        return res.status(400).json({
+          msg: "Tienes un pago pendiente. Por favor actualiza tu método de pago.",
+          subscriptionId: suscripcionVigente.id,
+        });
+      }
+
+      // Si está active, simplemente no dejamos crear otra
+      return res.status(400).json({
+        msg: "Ya tienes una suscripción activa.",
+      });
+    }
+
+    // ✅ Solo llegamos aquí si NO hay suscripción vigente en Stripe
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
@@ -80,16 +103,27 @@ const crearSesionSuscripcionMensual = async (req, res) => {
       cancel_url: `${process.env.CLIENT_URL}/cancel`,
     });
 
-    // 3️⃣ UPSERT EN TU DB (Limpia el status local)
-    await Subscription.destroy({ where: { userId: user.id } }); // Borramos registro viejo
-    await Subscription.create({
-      userId: user.id,
-      stripe_checkout_session_id: session.id,
-      stripe_customer_id: customerId,
-      subscription_type: "RECURRING",
-      price_id: priceId,
-      status: "pending",
+    // ✅ NO destruyas el registro viejo aquí, solo actualiza o crea
+    // El webhook se encargará de actualizar cuando el pago se confirme
+    const subExistente = await Subscription.findOne({
+      where: { userId: user.id },
     });
+
+    if (subExistente) {
+      await subExistente.update({
+        stripe_checkout_session_id: session.id,
+        status: "pending",
+      });
+    } else {
+      await Subscription.create({
+        userId: user.id,
+        stripe_checkout_session_id: session.id,
+        stripe_customer_id: customerId,
+        subscription_type: "RECURRING",
+        price_id: priceId,
+        status: "pending",
+      });
+    }
 
     return res.status(200).json({ id: session.id, url: session.url });
   } catch (error) {
@@ -97,7 +131,6 @@ const crearSesionSuscripcionMensual = async (req, res) => {
     return res.status(400).json({ msg: error.message });
   }
 };
-
 /* ================================================= */
 /* 🔹 CANCELAR SUSCRIPCIÓN (SUAVE)                  */
 /* ================================================= */
