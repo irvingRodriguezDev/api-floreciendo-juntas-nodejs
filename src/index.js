@@ -33,7 +33,7 @@ const corsOptions = {
     "https://admin.floreciendojuntas.com",
     "https://www.admin.floreciendojuntas.com",
   ],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };

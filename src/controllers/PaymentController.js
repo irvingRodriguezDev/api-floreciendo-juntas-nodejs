@@ -8,22 +8,36 @@ const moment = require("moment-timezone");
 const getOrCreateStripeCustomer = async (user) => {
   if (!user) throw new Error("Usuario no encontrado");
 
-  // 1. Si ya tenemos el ID, lo usamos
-  if (user.stripe_id) return user.stripe_id;
+  // 1. Si tiene stripe_id, verificar que aún existe en Stripe
+  if (user.stripe_id) {
+    try {
+      const existing = await stripe.customers.retrieve(user.stripe_id);
+      if (!existing.deleted) return user.stripe_id;
+      // Si fue eliminado, limpiar y continuar
+      await user.update({ stripe_id: null });
+    } catch (e) {
+      // No existe en Stripe, limpiar y continuar
+      await user.update({ stripe_id: null });
+    }
+  }
 
-  // 2. Opcional: Buscar en Stripe por email para evitar duplicados históricos
+  // 2. Buscar en Stripe por email
   const existingCustomers = await stripe.customers.list({
     email: user.email,
-    limit: 1,
+    limit: 5, // Traer varios para elegir el más reciente con subs
   });
 
   if (existingCustomers.data.length > 0) {
-    const stripeId = existingCustomers.data[0].id;
-    await user.update({ stripe_id: stripeId });
-    return stripeId;
+    // Preferir el que tenga suscripciones activas, si no el más reciente
+    const withSub = existingCustomers.data.find(
+      (c) => c.subscriptions?.total_count > 0,
+    );
+    const best = withSub || existingCustomers.data[0];
+    await user.update({ stripe_id: best.id });
+    return best.id;
   }
 
-  // 3. Si no existe en ningún lado, lo creamos
+  // 3. Crear nuevo
   const customer = await stripe.customers.create({
     email: user.email,
     name: user.name,
@@ -32,24 +46,6 @@ const getOrCreateStripeCustomer = async (user) => {
 
   await user.update({ stripe_id: customer.id });
   return customer.id;
-};
-const limpiarSuscripcionesPrevias = async (customerId) => {
-  // Traemos todas las suscripciones del cliente, sin importar el estado
-  const subs = await stripe.subscriptions.list({
-    customer: customerId,
-    status: "all",
-    limit: 10,
-  });
-
-  // Cancelamos todo lo que no esté ya cancelado
-  for (const sub of subs.data) {
-    if (sub.status !== "canceled") {
-      await stripe.subscriptions.cancel(sub.id);
-      console.log(
-        `✅ Suscripción previa ${sub.id} cancelada para evitar conflictos.`,
-      );
-    }
-  }
 };
 
 /* ================================================= */

@@ -45,6 +45,8 @@ const EvaluationScore = require("./EvaluationScore");
 const ModuleCriterion = require("./ModuleCriterion");
 const ModuleEvaluation = require("./ModuleEvaluation");
 const ModuleSubmission = require("./ModuleSubmission");
+const Store = require("./Store");
+const DownloadedCertificate = require("./DownloadedCertificate");
 // Registrar modelos
 const db = {
   sequelize,
@@ -90,6 +92,8 @@ const db = {
   ModuleCriterion,
   ModuleEvaluation,
   ModuleSubmission,
+  Store,
+  DownloadedCertificate,
 };
 
 // 🔹 Relaciones entre Role y User

@@ -19,6 +19,10 @@ const Certification = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true,
     },
+    diploma: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     start_date: {
       type: DataTypes.DATE,
     },

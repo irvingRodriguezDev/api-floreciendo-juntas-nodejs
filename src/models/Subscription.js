@@ -25,7 +25,7 @@ const Subscription = sequelize.define(
     // ID de la Sesión de Stripe (para cualquier tipo de pago)
     stripe_checkout_session_id: {
       type: DataTypes.STRING,
-      allowNull: false, // Este sí debe existir siempre
+      allowNull: true, // Este sí debe existir siempre
       unique: true,
     },
     // Tipo de pago para saber cómo manejar la expiración

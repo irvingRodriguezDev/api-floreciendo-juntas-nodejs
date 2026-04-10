@@ -59,29 +59,46 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
        *    Solo aplica cuando el modo es "subscription"
        * ══════════════════════════════════════════════════ */
       case "checkout.session.completed": {
-        console.log("completed");
         if (data.mode !== "subscription") break;
 
-        const existingSub = await Subscription.findOne({
-          where: { userId: data.metadata.userId },
+        // Primero buscar si ya existe esta sub específica
+        const existingBySubId = await Subscription.findOne({
+          where: { stripe_subscription_id: data.subscription },
         });
 
-        if (existingSub) {
-          await existingSub.update({
-            stripe_subscription_id: data.subscription,
+        if (existingBySubId) {
+          // Ya existe (creada por subscription.updated), solo asegurar que esté active
+          await existingBySubId.update({
             stripe_customer_id: data.customer,
             status: "active",
             price_id: data.metadata.priceId,
           });
         } else {
-          await Subscription.create({
-            userId: data.metadata.userId,
-            stripe_subscription_id: data.subscription,
-            stripe_customer_id: data.customer,
-            status: "active",
-            price_id: data.metadata.priceId,
-            subscription_type: "RECURRING",
+          // Buscar por userId para actualizar el registro pending del checkout
+          const existingByUser = await Subscription.findOne({
+            where: {
+              userId: data.metadata.userId,
+              status: "pending", // ← Solo tocar el que está pending
+            },
           });
+
+          if (existingByUser) {
+            await existingByUser.update({
+              stripe_subscription_id: data.subscription,
+              stripe_customer_id: data.customer,
+              status: "active",
+              price_id: data.metadata.priceId,
+            });
+          } else {
+            await Subscription.create({
+              userId: data.metadata.userId,
+              stripe_subscription_id: data.subscription,
+              stripe_customer_id: data.customer,
+              status: "active",
+              price_id: data.metadata.priceId,
+              subscription_type: "RECURRING",
+            });
+          }
         }
 
         await User.update(
@@ -98,8 +115,6 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
        *    manejó checkout.session.completed
        * ══════════════════════════════════════════════════ */
       case "invoice.payment_succeeded": {
-        console.log("succeded");
-
         if (data.billing_reason === "subscription_create") break;
 
         const subscriptionId =
@@ -133,6 +148,40 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
           { isSubscribed: true },
           { where: { stripe_id: data.customer } },
         );
+        break;
+      }
+      case "customer.subscription.created": {
+        console.log("subscription created", data.id);
+        // Reusar exactamente la misma lógica que updated
+        // La forma más limpia: extraer el handler a una función
+
+        const user = await User.findOne({
+          where: { stripe_id: data.customer },
+        });
+        if (!user) {
+          console.warn(
+            `⚠️ subscription.created sin usuario para ${data.customer}`,
+          );
+          break;
+        }
+
+        const stripePeriodEnd =
+          data.current_period_end || data.items?.data[0]?.current_period_end;
+
+        await Subscription.findOrCreate({
+          where: { stripe_subscription_id: data.id },
+          defaults: {
+            userId: user.id,
+            stripe_subscription_id: data.id,
+            stripe_customer_id: data.customer,
+            status: data.status,
+            price_id: data.items?.data[0]?.price?.id,
+            subscription_type: "RECURRING",
+            next_renewal: stripePeriodEnd
+              ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
+              : null,
+          },
+        });
         break;
       }
 
@@ -191,32 +240,55 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
        *    incomplete_expired → ❌ sin acceso
        * ══════════════════════════════════════════════════ */
       case "customer.subscription.updated": {
-        console.log("updated");
-
-        const dbSub = await Subscription.findOne({
-          where: { stripe_subscription_id: data.id },
+        // Buscar el usuario por stripe_customer_id
+        const user = await User.findOne({
+          where: { stripe_id: data.customer },
         });
-        if (!dbSub) break;
+        if (!user) {
+          console.warn(
+            `⚠️ No se encontró usuario para customer ${data.customer}`,
+          );
+          break;
+        }
 
         const status = data.status;
         const stripePeriodEnd =
           data.current_period_end || data.items?.data[0]?.current_period_end;
 
-        await dbSub.update({
-          status,
-          next_renewal: stripePeriodEnd
-            ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
-            : null,
-          will_cancel_at: data.cancel_at
-            ? moment.unix(data.cancel_at).tz(timezone).toDate()
-            : null,
-          ended_at: data.cancel_at_period_end ? dbSub.ended_at : null,
+        // UPSERT: si no existe el registro, crearlo. Si existe, actualizarlo.
+        const [dbSub, created] = await Subscription.findOrCreate({
+          where: { stripe_subscription_id: data.id },
+          defaults: {
+            userId: user.id,
+            stripe_subscription_id: data.id,
+            stripe_customer_id: data.customer,
+            status,
+            price_id: data.items?.data[0]?.price?.id,
+            subscription_type: "RECURRING",
+            next_renewal: stripePeriodEnd
+              ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
+              : null,
+          },
         });
 
-        // ✅ Estados que mantienen acceso
-        const statusConAcceso = ["active", "trialing", "past_due"];
+        if (created) {
+          console.log(
+            `✅ Suscripción ${data.id} creada desde subscription.updated`,
+          );
+        } else {
+          await dbSub.update({
+            status,
+            next_renewal: stripePeriodEnd
+              ? moment.unix(stripePeriodEnd).tz(timezone).toDate()
+              : null,
+            will_cancel_at: data.cancel_at
+              ? moment.unix(data.cancel_at).tz(timezone).toDate()
+              : null,
+            ended_at: data.cancel_at_period_end ? dbSub.ended_at : null,
+          });
+        }
 
-        // ✅ Estados que quitan acceso
+        const statusConAcceso = ["active", "trialing", "past_due"];
         const statusSinAcceso = ["canceled", "unpaid", "incomplete_expired"];
 
         if (statusConAcceso.includes(status)) {
@@ -232,7 +304,6 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         }
         break;
       }
-
       /* ══════════════════════════════════════════════════
        * 5. SUSCRIPCIÓN CANCELADA DEFINITIVAMENTE
        *    Llega cuando:

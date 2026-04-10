@@ -7,6 +7,7 @@ const {
   ModuleEvaluation,
   EvaluationScore,
   User,
+  DownloadedCertificate,
 } = require("../models");
 const fs = require("fs");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
@@ -15,6 +16,7 @@ const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const path = require("path");
 const sharp = require("sharp");
+const { generateFolio } = require("../helpers/FolioGenerator");
 
 const CreateCertification = async (req, res) => {
   try {
@@ -29,6 +31,7 @@ const CreateCertification = async (req, res) => {
 
     const imageFile = req.files?.image?.[0];
     const certificateFile = req.files?.certificate?.[0];
+    const diplomaFile = req.files?.diploma?.[0];
 
     // 🔎 Validar archivo
     if (!imageFile) {
@@ -39,6 +42,11 @@ const CreateCertification = async (req, res) => {
     if (!certificateFile) {
       return res.status(400).json({
         message: "El certificado es requerido",
+      });
+    }
+    if (!diplomaFile) {
+      return res.status(400).json({
+        message: "El Diploma es requerido",
       });
     }
 
@@ -71,6 +79,11 @@ const CreateCertification = async (req, res) => {
       certificateFile,
       certification.id,
     );
+    const diplomaPath = await uploadToS3(
+      "certifications/diploma",
+      diplomaFile,
+      certification.id,
+    );
 
     // 3️⃣ Guardar solo el path en DB
     certification.image = imagePath;
@@ -82,6 +95,7 @@ const CreateCertification = async (req, res) => {
       ...certification.toJSON(),
       image: getS3Url(imagePath),
       certificate: getS3Url(certificatePath),
+      diploma: getS3Url(diplomaPath),
     };
 
     return res.status(201).json(certificationResponse);
@@ -101,6 +115,7 @@ const GetActiveCertifications = async (req, res) => {
     const wihtUrls = certifications.map((c) => ({
       ...c.toJSON(),
       image: c.image ? getS3Url(c.image) : null,
+      diploma: c.diploma ? getS3Url(c.diploma) : null,
     }));
     return res.json(wihtUrls);
   } catch (error) {
@@ -129,6 +144,7 @@ const GetCertificationById = async (req, res) => {
       certification,
       image: getS3Url(certification.image),
       certificate: getS3Url(certification.certificate),
+      diploma: certification.diploma ? getS3Url(certification.diploma) : null,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -335,8 +351,11 @@ const GetMyCertificationDetail = async (req, res) => {
     return res.json({
       id: certification.id,
       name: certification.name,
-      image: getS3Url(certification.image),
-      certificate: getS3Url(certification.certificate),
+      image: certification.image ? getS3Url(certification.image) : null,
+      certificate: certification.certificate
+        ? getS3Url(certification.certificate)
+        : null,
+      diploma: certification.diploma ? getS3Url(certification.diploma) : null,
       start_date: certification.start_date,
       end_date: certification.end_date,
       min_passing_score: certification.min_passing_score,
@@ -353,15 +372,21 @@ const GetMyCertificationDetail = async (req, res) => {
 };
 const downloadCertificate = async (req, res) => {
   try {
-    const { certificationId } = req.query;
+    const { certificationId, nameCertification } = req.query;
     const userId = req.user.id;
 
     // ================================
     // 🔎 Buscar datos en BD en paralelo
     // ================================
-    const [user, certificado] = await Promise.all([
+    const [user, certificado, userCertification] = await Promise.all([
       User.findByPk(userId),
       Certification.findOne({ where: { id: certificationId } }),
+      DownloadedCertificate.findOne({
+        where: {
+          user_id: userId,
+          certification_id: certificationId,
+        },
+      }),
     ]);
 
     if (!user) {
@@ -372,8 +397,34 @@ const downloadCertificate = async (req, res) => {
       return res.status(404).json({ message: "Certificado no encontrado" });
     }
 
-    // ✅ BD ya no se necesita a partir de aquí
-    const userName = user.name;
+    // ================================
+    // 📋 Obtener o crear certificado con folio
+    // ================================
+    let downloadedCert;
+
+    if (userCertification) {
+      downloadedCert = userCertification;
+      await downloadedCert.update({
+        download_count: downloadedCert.download_count + 1,
+        last_download_at: new Date(),
+      });
+    } else {
+      const folio = await generateFolio();
+
+      downloadedCert = await DownloadedCertificate.create({
+        folio,
+        score: 148,
+        certification_id: certificationId,
+        user_id: userId,
+        issued_at: new Date(),
+        download_count: 1,
+        last_download_at: new Date(),
+      });
+    }
+
+    const userName = nameCertification;
+    const folio = downloadedCert.folio;
+    const issuedDate = downloadedCert.issued_at;
     const pdfUrl = getS3Url(certificado.certificate);
     const imageUrl = user.profileImage ? getS3Url(user.profileImage) : null;
 
@@ -397,21 +448,75 @@ const downloadCertificate = async (req, res) => {
     const { width, height } = page.getSize();
 
     // ================================
-    // 🎨 Fuente cursiva
+    // 🎨 Fuente cursiva para nombre CON CENTRADO DINÁMICO
     // ================================
     const fontPath = path.join(__dirname, "../fonts/Ephesis-Regular.ttf");
     const fontBytes = fs.readFileSync(fontPath);
     const customFont = await pdfDoc.embedFont(fontBytes);
 
-    const textSize = 150;
-    const xCentered = (width - 1800) / 2;
-    const yPosition = 1950;
+    // 🔧 ÁREA DISPONIBLE PARA EL NOMBRE (ajusta estos valores según tu diseño)
+    const nameAreaLeft = 75; // Margen izquierdo del área del nombre
+    const nameAreaRight = width - 75; // Margen derecho del área del nombre
+    const availableWidth = nameAreaRight - nameAreaLeft;
+
+    const yPosition = 475;
+
+    // 🔧 CALCULAR TAMAÑO DE FUENTE DINÁMICO
+    let textSize = 55; // Tamaño máximo deseado
+    const minTextSize = 35; // Tamaño mínimo para nombres muy largos
+    let textWidth = customFont.widthOfTextAtSize(userName, textSize);
+
+    // Si el texto es muy ancho, reducir el tamaño proporcionalmente
+    while (textWidth > availableWidth && textSize > minTextSize) {
+      textSize -= 1;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    // Si aún es muy largo con el tamaño mínimo, forzar que quepa
+    if (textWidth > availableWidth) {
+      textSize = (availableWidth / textWidth) * textSize;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    // ✅ CENTRADO REAL basado en el ancho del texto
+    const xCentered = nameAreaLeft + (availableWidth - textWidth) / 2;
 
     page.drawText(userName, {
       x: xCentered,
       y: yPosition,
       size: textSize,
       font: customFont,
+      color: rgb(0.0, 0.0, 0.0),
+    });
+
+    // ================================
+    // 📝 Agregar FOLIO al PDF
+    // ================================
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const folioText = `Folio: ${folio}`;
+    const folioSize = 12;
+    const folioWidth = helveticaFont.widthOfTextAtSize(folioText, folioSize);
+
+    page.drawText(folioText, {
+      x: width - folioWidth - 50,
+      y: 40,
+      size: folioSize,
+      font: helveticaFont,
+      color: rgb(0.0, 0.0, 0.0),
+    });
+
+    // ================================
+    // 📅 Agregar FECHA DE EMISIÓN
+    // ================================
+    const dateText = `Fecha de emisión: ${issuedDate.toLocaleDateString("es-MX")}`;
+    const dateSize = 12;
+
+    page.drawText(dateText, {
+      x: 50,
+      y: 40,
+      size: dateSize,
+      font: helveticaFont,
       color: rgb(0.0, 0.0, 0.0),
     });
 
@@ -441,10 +546,10 @@ const downloadCertificate = async (req, res) => {
       const embeddedImage = await pdfDoc.embedPng(ovalBuffer);
 
       page.drawImage(embeddedImage, {
-        x: width - 750,
-        y: 2150,
-        width: 500,
-        height: 650,
+        x: width - 580,
+        y: 560,
+        width: 140,
+        height: 190,
       });
     }
 
@@ -452,14 +557,200 @@ const downloadCertificate = async (req, res) => {
     // 💾 Enviar PDF
     // ================================
     const pdfBytes = await pdfDoc.save();
-    const fileName = `certificado_${userName.replace(/ /g, "_")}.pdf`;
+    const fileName = `certificado_${userName.replace(/ /g, "_")}_${folio}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error(error);
+    console.error("Error generando certificado:", error);
     res.status(500).json({ message: "Error generando certificado" });
+  }
+};
+const UpdateCertification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      start_date,
+      end_date,
+      min_passing_score,
+      max_passing_score,
+      is_active,
+    } = req.body;
+
+    // 🔎 Buscar la certificación primero
+    const certification = await Certification.findByPk(id);
+    if (!certification) {
+      return res.status(404).json({
+        message: "Certificación no encontrada",
+      });
+    }
+
+    // 🔎 Validar fechas (solo si ambas están presentes en el body)
+    const startDate = start_date
+      ? new Date(start_date)
+      : new Date(certification.start_date);
+    const endDate = end_date
+      ? new Date(end_date)
+      : new Date(certification.end_date);
+
+    if (startDate >= endDate) {
+      return res.status(400).json({
+        message: "La fecha de inicio debe ser menor a la fecha de fin",
+      });
+    }
+
+    // 📂 Procesar archivos (Solo si vienen en el request)
+    const imageFile = req.files?.image?.[0];
+    const certificateFile = req.files?.certificate?.[0];
+    const diplomaFile = req.files?.diploma?.[0];
+
+    let imagePath = certification.image;
+    let certificatePath = certification.certificate;
+    let diplomaPath = certification.diploma;
+
+    if (imageFile) {
+      imagePath = await uploadToS3("certifications", imageFile, id);
+    }
+    if (certificateFile) {
+      certificatePath = await uploadToS3(
+        "certifications/certificate",
+        certificateFile,
+        id,
+      );
+    }
+    if (diplomaFile) {
+      diplomaPath = await uploadToS3("certifications/diploma", diplomaFile, id);
+    }
+
+    // 📝 Actualizar campos en la DB
+    await certification.update({
+      name: name ?? certification.name,
+      start_date: start_date ?? certification.start_date,
+      end_date: end_date ?? certification.end_date,
+      min_passing_score: min_passing_score ?? certification.min_passing_score,
+      max_passing_score: max_passing_score ?? certification.max_passing_score,
+      is_active: is_active !== undefined ? is_active : certification.is_active,
+      image: imagePath,
+      certificate: certificatePath,
+      diploma: diplomaPath,
+    });
+
+    // 4️⃣ Preparar respuesta con URL pública
+    const certificationResponse = {
+      ...certification.toJSON(),
+      image: getS3Url(imagePath),
+      certificate: getS3Url(certificatePath),
+      diploma: getS3Url(diplomaPath),
+    };
+
+    return res.status(200).json(certificationResponse);
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const downloadDiploma = async (req, res) => {
+  try {
+    const { certificationId, nombreDiploma } = req.query;
+    const userId = req.user.id;
+
+    // ================================
+    // 🔎 Obtener datos del usuario y la certificación
+    // ================================
+    const [user, certification] = await Promise.all([
+      User.findByPk(userId),
+      Certification.findByPk(certificationId),
+    ]);
+
+    if (!user || !certification) {
+      return res.status(404).json({ message: "Información no encontrada" });
+    }
+
+    // ================================
+    // 📥 Descarga de recursos en paralelo
+    // ================================
+    const s3Path = certification.diploma;
+    const pdfUrl = getS3Url(s3Path);
+
+    const [existingPdfBytes, fontBytes] = await Promise.all([
+      fetch(pdfUrl).then((r) => r.arrayBuffer()),
+      fs.promises.readFile(
+        path.join(__dirname, "../fonts/Ephesis-Regular.ttf"),
+      ),
+    ]);
+
+    // ================================
+    // 📄 Configuración del documento PDF
+    // ================================
+    const pdfDoc = await PDFDocument.load(existingPdfBytes);
+    pdfDoc.registerFontkit(fontkit);
+
+    const customFont = await pdfDoc.embedFont(fontBytes);
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const page = pdfDoc.getPages()[0];
+    const { width, height } = page.getSize();
+
+    // ================================
+    // 🎨 Nombre del Alumno con CENTRADO DINÁMICO REAL
+    // ================================
+    const studentName = nombreDiploma;
+
+    // 🔧 ÁREA DISPONIBLE PARA EL NOMBRE
+    const nameAreaLeft = 75; // Margen izquierdo
+    const nameAreaRight = width - 75; // Margen derecho
+    const availableWidth = nameAreaRight - nameAreaLeft;
+
+    const yPosition = 470;
+
+    // 🔧 CALCULAR TAMAÑO DE FUENTE DINÁMICO
+    let fontSize = 65; // Tamaño máximo deseado
+    const minFontSize = 40; // Tamaño mínimo para nombres muy largos
+    let textWidth = customFont.widthOfTextAtSize(studentName, fontSize);
+
+    // Si el texto es muy ancho, reducir el tamaño proporcionalmente
+    while (textWidth > availableWidth && fontSize > minFontSize) {
+      fontSize -= 1;
+      textWidth = customFont.widthOfTextAtSize(studentName, fontSize);
+    }
+
+    // Si aún es muy largo con el tamaño mínimo, forzar que quepa
+    if (textWidth > availableWidth) {
+      fontSize = (availableWidth / textWidth) * fontSize;
+      textWidth = customFont.widthOfTextAtSize(studentName, fontSize);
+    }
+
+    // ✅ CENTRADO REAL basado en el ancho exacto del texto
+    const xCentered = nameAreaLeft + (availableWidth - textWidth) / 2;
+
+    page.drawText(studentName, {
+      x: xCentered,
+      y: yPosition,
+      size: fontSize,
+      font: customFont,
+      color: rgb(0, 0, 0),
+    });
+
+    // ================================
+    // 💾 Generar y enviar el archivo
+    // ================================
+    const pdfBytes = await pdfDoc.save();
+    const fileName = `Diploma_${studentName.replace(/\s+/g, "_")}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    return res.send(Buffer.from(pdfBytes));
+  } catch (error) {
+    console.error("Error al procesar el diplomado:", error);
+    return res.status(500).json({
+      message: "No pudimos generar tu diploma en este momento.",
+      error: error.message,
+    });
   }
 };
 
@@ -470,4 +761,6 @@ module.exports = {
   GetMyCertificationDetail,
   GetModuleCertificationById,
   downloadCertificate,
+  UpdateCertification,
+  downloadDiploma,
 };
