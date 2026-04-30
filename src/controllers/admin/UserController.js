@@ -36,6 +36,8 @@ const eligibleUsers = async (req, res) => {
     const users = await getEligibleUsers();
     return res.status(200).json({ users });
   } catch (error) {
+    console.log(error, "error en elegible users");
+
     return res.status(500).json({ error: error.message });
   }
 };

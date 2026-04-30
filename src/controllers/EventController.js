@@ -573,6 +573,7 @@ const buyTicket = async (req, res) => {
           quantity: String(quantity),
           buyerName,
           buyerEmail,
+          origin: "AUTH", // Indica que es una compra con usuario autenticado
         },
       },
 
@@ -583,6 +584,7 @@ const buyTicket = async (req, res) => {
         quantity: String(quantity),
         buyerName,
         buyerEmail,
+        origin: "AUTH", // Indica que es una compra con usuario autenticado
       },
 
       customer_email: buyerEmail,
@@ -590,6 +592,154 @@ const buyTicket = async (req, res) => {
 
       success_url: `${process.env.CLIENT_URL}/success-payment-tickets?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.CLIENT_URL}/error`,
+    });
+
+    await t.commit();
+
+    return res.status(200).json({
+      url: session.url,
+      expiresAt,
+      sessionId: session.id,
+      ticketIds: tickets.map((t) => t.id), // útil para el frontend
+      quantity,
+    });
+  } catch (error) {
+    console.error("Error en buyTicket:", error);
+    try {
+      await t.rollback();
+    } catch (rollbackError) {
+      console.error("Error al hacer rollback:", rollbackError);
+    }
+    return res.status(500).json({
+      message: "Error creando la sesión de pago",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+const buyTicketOpen = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { eventId, buyerName, buyerEmail, quantity = 1 } = req.body;
+
+    // Validar campos requeridos
+    if (!eventId || !buyerName || !buyerEmail) {
+      await t.rollback();
+      return res.status(400).json({ message: "Faltan campos requeridos" });
+    }
+
+    // Validar quantity
+    if (quantity < 1 || quantity > 50) {
+      await t.rollback();
+      return res.status(400).json({ message: "Cantidad inválida (1-50)" });
+    }
+
+    // Buscar el evento
+    const event = await Event.findByPk(eventId, { transaction: t });
+
+    if (!event) {
+      await t.rollback();
+      return res.status(404).json({ message: "Evento no encontrado" });
+    }
+
+    // Buscar N boletos disponibles (no vendidos, no reservados o con reserva expirada)
+    const now = new Date();
+    const tickets = await Ticket.findAll({
+      where: {
+        eventId,
+        sold: false,
+        [Op.or]: [
+          { reserved: false },
+          { reservation_expires_at: { [Op.lt]: now } },
+          { reservation_expires_at: null },
+        ],
+      },
+      order: [["id", "ASC"]], // 🔑 Orden secuencial para boletos consecutivos
+      limit: quantity,
+      lock: t.LOCK.UPDATE,
+      transaction: t,
+    });
+
+    // ¿Hay suficientes boletos?
+    if (tickets.length < quantity) {
+      await t.rollback();
+      return res.status(400).json({
+        message:
+          tickets.length === 0
+            ? "Tickets agotados"
+            : `Solo quedan ${tickets.length} boleto(s) disponibles`,
+      });
+    }
+
+    // Reservar todos los boletos
+    const expirationMinutes = Math.max(RESERVATION_MINUTES || 30, 30);
+    const expiresAt = new Date(Date.now() + expirationMinutes * 60 * 1000);
+
+    await Promise.all(
+      tickets.map((ticket) =>
+        ticket.update(
+          {
+            reserved: true,
+            reservation_expires_at: expiresAt,
+            buyerName,
+            buyerEmail,
+          },
+          { transaction: t },
+        ),
+      ),
+    );
+
+    // IDs como string separado por comas para la metadata de Stripe
+    const ticketIds = tickets.map((t) => t.id).join(",");
+    const firstTicket = tickets[0].id;
+    // Crear sesión de Stripe
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+
+      line_items: [
+        {
+          price_data: {
+            currency: "mxn",
+            product_data: {
+              name: `${quantity} boleto(s) — ${event.title}`,
+              description:
+                quantity > 1
+                  ? `${quantity} boletos para ${event.title}`
+                  : `Boleto #${firstTicket}`,
+            },
+            unit_amount: event.price * 100, // precio unitario en centavos
+          },
+          quantity, // 🔑 Stripe multiplica el precio automáticamente
+        },
+      ],
+
+      payment_intent_data: {
+        metadata: {
+          flow: "VENTA_TICKET",
+          eventId: String(eventId),
+          ticketIds, // "101,102,103"
+          quantity: String(quantity),
+          buyerName,
+          buyerEmail,
+          origin: "OPEN", // Indica que es una compra abierta (sin usuario autenticado)
+        },
+      },
+
+      metadata: {
+        flow: "VENTA_TICKET",
+        eventId: String(eventId),
+        ticketIds, // "101,102,103"
+        quantity: String(quantity),
+        buyerName,
+        buyerEmail,
+        origin: "OPEN", // Indica que es una compra abierta (sin usuario autenticado)
+      },
+
+      customer_email: buyerEmail,
+      expires_at: Math.floor(expiresAt.getTime() / 1000),
+
+      success_url: `https://eventoswapizima.com/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://eventoswapizima.com/payment-error`,
     });
 
     await t.commit();
@@ -757,6 +907,7 @@ const deleteEvent = async (req, res) => {
 
 module.exports = {
   buyTicket,
+  buyTicketOpen,
   getEventById,
   getEvents,
   createEvent,

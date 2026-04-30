@@ -182,7 +182,8 @@ const updateStore = async (req, res) => {
     const userId = req.user.id;
 
     // ── 1. Verificar que la tienda existe y pertenece al usuario ──────────────
-    const store = await Store.findOne({ where: { id, userId } });
+    const store = await Store.findOne({ where: { id: id, userId: userId } });
+
     if (!store) {
       return res.status(404).json({
         message: "Tienda no encontrada o no tienes permiso para editarla.",

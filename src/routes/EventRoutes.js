@@ -23,5 +23,6 @@ router.delete("/:id", authMiddleware, eventController.deleteEvent);
 
 // Comprar ticket
 router.post("/buy/ticket", eventController.buyTicket);
+router.post("/buy/ticket/open", eventController.buyTicketOpen);
 
 module.exports = router;

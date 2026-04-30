@@ -27,7 +27,13 @@ const getEligibleUsers = async ({
         model: Subscription,
         as: "subscriptions",
         required: true,
-        attributes: [],
+        attributes: [
+          "status",
+          "stripe_subscription_id",
+          "stripe_customer_id",
+          "start_date",
+          "next_renewal",
+        ],
         where: {
           status: {
             [Op.in]: ["active", "past_due"],
@@ -41,7 +47,16 @@ const getEligibleUsers = async ({
         id: { [Op.notIn]: excludeIds },
       }),
     },
-    group: ["User.id"],
+    // AGREGAR AQUÍ TODAS LAS COLUMNAS DE SUBSCRIPTIONS QUE ESTÁN EN ATTRIBUTES
+    group: [
+      "User.id",
+      "subscriptions.id", // Agregamos el ID de la suscripción
+      "subscriptions.status",
+      "subscriptions.stripe_subscription_id",
+      "subscriptions.stripe_customer_id",
+      "subscriptions.start_date",
+      "subscriptions.next_renewal",
+    ],
     having: literal("COUNT(subscriptions.id) = 1"),
     raw: true,
     transaction,

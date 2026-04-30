@@ -12,6 +12,7 @@ const {
 } = require("../models");
 const moment = require("moment-timezone");
 const sendTicketEmail = require("../helpers/sendTicketMail");
+const sendTicketEmailOpen = require("../helpers/sendTicketMailOpen");
 const sequelize = require("../config/db");
 // NOTA: Asegúrate de que estas variables de entorno estén cargadas
 const subscriptionEndpointSecret =
@@ -375,7 +376,8 @@ const handleTicketStripeWebhook = async (req, res) => {
     return res.json({ received: true });
   }
 
-  const { ticketIds, eventId, buyerEmail, buyerName } = session.metadata ?? {};
+  const { ticketIds, eventId, buyerEmail, buyerName, origin } =
+    session.metadata ?? {};
 
   if (!ticketIds || !eventId || !buyerEmail) {
     console.error("❌ Metadata incompleta:", session.metadata);
@@ -425,14 +427,26 @@ const handleTicketStripeWebhook = async (req, res) => {
     ]);
 
     // ✅ UN solo correo de confirmación
-    try {
-      await sendTicketEmail(
-        tickets,
-        evento,
-        usuario ?? { email: buyerEmail, name: buyerName },
-      );
-    } catch (emailErr) {
-      console.error("⚠️ Email falló, tickets ya vendidos:", emailErr);
+    if (origin === "OPEN") {
+      try {
+        await sendTicketEmailOpen(
+          tickets,
+          evento,
+          usuario ?? { email: buyerEmail, name: buyerName },
+        );
+      } catch (emailErr) {
+        console.error("⚠️ Email falló, tickets ya vendidos:", emailErr);
+      }
+    } else {
+      try {
+        await sendTicketEmail(
+          tickets,
+          evento,
+          usuario ?? { email: buyerEmail, name: buyerName },
+        );
+      } catch (emailErr) {
+        console.error("⚠️ Email falló, tickets ya vendidos:", emailErr);
+      }
     }
 
     // ✅ Socket

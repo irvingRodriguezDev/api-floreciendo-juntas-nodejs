@@ -240,10 +240,73 @@ const generateLinks = async (req, res) => {
   }
 };
 
+const showTicket = async (req, res) => {
+  try {
+    const { code } = req.params;
+    console.log(code, "el codigo");
+
+    // 1. IMPORTANTE: Agregar el await para esperar a la DB
+    // 2. Opcional: .lean() mejora el rendimiento si solo vas a leer datos
+    const ticket = await Ticket.findOne({ where: { code: code } });
+
+    // 3. Validar si el ticket realmente existe
+    if (!ticket) {
+      return res.status(404).json({
+        message: "El boleto no es válido o no existe.",
+      });
+    }
+
+    // 4. Retornar el ticket encontrado
+    return res.status(200).json({ ticket });
+  } catch (error) {
+    console.error("Error mostrando el ticket:", error);
+    res.status(500).json({
+      message: "Error interno al consultar el ticket",
+      error: error.message,
+    });
+  }
+};
+
+const searchTicketsByEmail = async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    // 1. Validar que el email venga en los query params
+    if (!email) {
+      return res.status(400).json({
+        message:
+          "El correo electrónico es requerido para consultar los boletos.",
+      });
+    }
+
+    // 2. Buscar boletos vinculados al email que NO hayan sido escaneados
+    // Usamos .lean() para que la respuesta sea más ligera (solo lectura)
+    const tickets = await Ticket.findAll({
+      where: {
+        buyerEmail: email,
+        scanned: false,
+      },
+    });
+
+    // 3. Responder con el arreglo de boletos (aunque sea un array vacío [])
+    return res
+      .status(200)
+      .json({ tickets, message: "Tickets encontrados con exito" });
+  } catch (error) {
+    console.error("Error al obtener boletos del usuario:", error);
+    res.status(500).json({
+      message: "Error interno al consultar tus boletos",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   sendTicketEmail,
   getUserTickets,
   downloadTicket,
   validateTicket,
   generateLinks,
+  showTicket,
+  searchTicketsByEmail,
 };

@@ -9,21 +9,37 @@ const {
   ModuleEvaluation,
   ModuleCriterion,
 } = require("../models");
-
+const convertImageIfNeeded = require("../helpers/convertImages");
+const ALLOWED_MIME_TYPES = [
+  // Imágenes
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
 const CreateSubmission = async (req, res) => {
   try {
     const userId = req.user.id;
     const { moduleId } = req.body;
 
     if (!moduleId) {
-      return res.status(400).json({
-        message: "moduleId es requerido",
-      });
+      return res.status(400).json({ message: "moduleId es requerido" });
     }
 
     if (!req.files || req.files.length !== 3) {
+      return res
+        .status(400)
+        .json({ message: "Debes subir exactamente 3 imágenes" });
+    }
+
+    // ✅ Validar tipos MIME antes de procesar
+    const invalidFiles = req.files.filter(
+      (file) => !ALLOWED_MIME_TYPES.includes(file.mimetype),
+    );
+    if (invalidFiles.length > 0) {
       return res.status(400).json({
-        message: "Debes subir exactamente 3 imágenes",
+        message: `Tipo de archivo no permitido: ${invalidFiles.map((f) => f.mimetype).join(", ")}`,
       });
     }
 
@@ -43,22 +59,23 @@ const CreateSubmission = async (req, res) => {
     ]);
 
     if (!module) {
-      return res.status(404).json({
-        message: "Módulo no encontrado",
-      });
+      return res.status(404).json({ message: "Módulo no encontrado" });
     }
 
     if (!module.certification.is_active) {
-      return res.status(400).json({
-        message: "La certificación no está activa",
-      });
+      return res
+        .status(400)
+        .json({ message: "La certificación no está activa" });
     }
 
     if (existingSubmission) {
-      return res.status(400).json({
-        message: "Ya entregaste este módulo",
-      });
+      return res.status(400).json({ message: "Ya entregaste este módulo" });
     }
+
+    // ✅ Convertir imágenes en paralelo (HEIC → JPEG, resto → WEBP)
+    const [mediaFile0, mediaFile1, mediaFile2] = await Promise.all(
+      req.files.map(convertImageIfNeeded),
+    );
 
     // ✅ Crear submission base
     const submission = await ModuleSubmission.create({
@@ -72,9 +89,9 @@ const CreateSubmission = async (req, res) => {
 
     // ✅ Subir las 3 imágenes a S3 en paralelo
     const [photo1Path, photo2Path, photo3Path] = await Promise.all([
-      uploadToS3("evaluations", req.files[0], `${submission.id}_1`),
-      uploadToS3("evaluations", req.files[1], `${submission.id}_2`),
-      uploadToS3("evaluations", req.files[2], `${submission.id}_3`),
+      uploadToS3("evaluations", mediaFile0, `${submission.id}_1`),
+      uploadToS3("evaluations", mediaFile1, `${submission.id}_2`),
+      uploadToS3("evaluations", mediaFile2, `${submission.id}_3`),
     ]);
 
     submission.photo_1 = photo1Path;
@@ -82,7 +99,6 @@ const CreateSubmission = async (req, res) => {
     submission.photo_3 = photo3Path;
     await submission.save();
 
-    // ✅ Respuesta limpia sin query extra innecesaria
     return res.status(201).json({
       message: "Entregable enviado correctamente",
       moduleId: submission.moduleId,
@@ -96,9 +112,7 @@ const CreateSubmission = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({
-      message: "Error al enviar el entregable",
-    });
+    return res.status(500).json({ message: "Error al enviar el entregable" });
   }
 };
 

@@ -13,5 +13,7 @@ router.get(
   ticketController.downloadTicket,
 );
 router.post("/validate", ticketController.validateTicket);
+router.get("/show/:code", ticketController.showTicket);
+router.get("/search-tickets", ticketController.searchTicketsByEmail);
 
 module.exports = router;
