@@ -25,16 +25,15 @@ app.set("trust proxy", 1);
 // ==============================
 const corsOptions = {
   origin: [
-    "https://localhost:3000",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://varmint-clamor-percolate.ngrok-free.dev/",
-    "https://excogitable-mavis-sulfureous.ngrok-free.dev",
     "https://floreciendojuntas.com",
     "https://www.floreciendojuntas.com",
     "https://admin.floreciendojuntas.com",
     "https://www.admin.floreciendojuntas.com",
     "https://eventoswapizima.com",
+    "https://localhost:3000",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://excogitable-mavis-sulfureous.ngrok-free.dev",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

@@ -47,6 +47,9 @@ const ModuleEvaluation = require("./ModuleEvaluation");
 const ModuleSubmission = require("./ModuleSubmission");
 const Store = require("./Store");
 const DownloadedCertificate = require("./DownloadedCertificate");
+const Formations = require("./Formations");
+const DeliveryFormations = require("./DeliveryFormations");
+const FormationsModules = require("./FormationsModules");
 // Registrar modelos
 const db = {
   sequelize,
@@ -94,6 +97,9 @@ const db = {
   ModuleSubmission,
   Store,
   DownloadedCertificate,
+  Formations,
+  DeliveryFormations,
+  FormationsModules,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -272,6 +278,38 @@ Certification.hasMany(CertificationModule, {
   foreignKey: "certificationId",
   as: "modules",
   onDelete: "CASCADE",
+});
+
+// Relación Formación -> Módulos (Esta está perfecta)
+Formations.hasMany(FormationsModules, {
+  foreignKey: "formationId",
+  as: "modules_formations",
+  onDelete: "CASCADE",
+});
+FormationsModules.belongsTo(Formations, {
+  foreignKey: "formationId",
+  as: "formation",
+});
+
+// Relación Módulos -> Entregables (Cambiamos 'moduleId' por 'moduleFormationId')
+FormationsModules.hasMany(DeliveryFormations, {
+  foreignKey: "moduleFormationId", // <--- Ajustado para que coincida con tu modelo
+  as: "deliveries",
+  onDelete: "CASCADE",
+});
+DeliveryFormations.belongsTo(FormationsModules, {
+  foreignKey: "moduleFormationId", // <--- Ajustado
+  as: "module",
+});
+
+// Relación Usuario -> Entregables
+User.hasMany(DeliveryFormations, {
+  foreignKey: "userId",
+  as: "deliveries",
+});
+DeliveryFormations.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
 });
 //cetificationModule
 CertificationModule.belongsTo(Certification, {

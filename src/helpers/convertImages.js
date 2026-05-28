@@ -25,19 +25,30 @@ const convertImageIfNeeded = async (file) => {
   }
 
   // Otras imágenes → WEBP (opcional)
+  // Optimización universal de imágenes
   if (file.mimetype.startsWith("image/")) {
-    const buffer = await sharp(file.buffer).webp({ quality: 85 }).toBuffer();
-
-    const newName = file.originalname.replace(
-      path.extname(file.originalname),
-      ".webp",
-    );
+    const buffer = await sharp(file.buffer)
+      .rotate() // Respeta orientación EXIF
+      .resize({
+        width: 1400,
+        withoutEnlargement: true,
+        fit: "inside",
+      })
+      .webp({
+        quality: 72,
+        effort: 4,
+      })
+      .toBuffer();
 
     return {
       ...file,
       buffer,
       mimetype: "image/webp",
-      originalname: newName,
+      originalname: file.originalname.replace(
+        path.extname(file.originalname),
+        ".webp",
+      ),
+      size: buffer.length,
     };
   }
 

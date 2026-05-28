@@ -1,5 +1,5 @@
 const cron = require("node-cron");
-const { Notifications, Live } = require("../models");
+const { Notifications, Live, Post } = require("../models");
 const { Op } = require("sequelize");
 const { getStreamViewers } = require("./awsIvsService");
 const { getIO } = require("../socket");
@@ -70,21 +70,27 @@ const initCronJobs = () => {
     },
   );
 
-  //se eejecuta cada dia a las 3AM
-  cron.schedule("0 3 * * *", async () => {
-    console.log("🔄 Iniciando limpieza de posts anclados...");
+  // Se ejecuta cada hora (ej: 1:00, 2:00, 3:00, etc.)
+  cron.schedule("0 * * * *", async () => {
+    console.log("🔄 Iniciando limpieza horaria de posts anclados...");
 
-    const [affectedRows] = await Post.update(
-      { isPinned: false, pinnedUntil: null },
-      {
-        where: {
-          isPinned: true,
-          pinnedUntil: { [Op.lte]: new Date() }, // Limpia todo lo que expiró antes de este momento
+    try {
+      const [affectedRows] = await Post.update(
+        { isPinned: false, pinnedUntil: null },
+        {
+          where: {
+            isPinned: true,
+            pinnedUntil: { [Op.lte]: new Date() },
+          },
         },
-      },
-    );
+      );
 
-    console.log(`✅ Se desanclaron ${affectedRows} posts.`);
+      if (affectedRows > 0) {
+        console.log(`✅ Se desanclaron ${affectedRows} posts expirados.`);
+      }
+    } catch (error) {
+      console.error("❌ Error en la limpieza de posts:", error);
+    }
   });
 };
 

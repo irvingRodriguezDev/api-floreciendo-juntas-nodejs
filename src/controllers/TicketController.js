@@ -55,6 +55,7 @@ const getUserTickets = async (req, res) => {
           {
             model: Event,
             as: "Event",
+            paranoid: false,
             where: {
               [Op.or]: [
                 { endDate: { [Op.gte]: new Date() } }, // si tiene endDate
@@ -123,6 +124,7 @@ const downloadTicket = async (req, res) => {
         {
           model: Event,
           as: "Event",
+          paranoid: false,
           where: { startDate: { [Op.gte]: new Date() } }, // evento vigente
         },
       ],

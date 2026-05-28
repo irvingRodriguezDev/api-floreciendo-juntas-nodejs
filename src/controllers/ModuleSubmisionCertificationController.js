@@ -393,9 +393,42 @@ const GetAllSubmissionReviewed = async (req, res) => {
   }
 };
 
+const deleteSubmissionPending = async (req, res) => {
+  try {
+    const { submissionId } = req.body;
+
+    // 1. Debes usar 'await' porque destroy es una promesa.
+    // 2. En Sequelize, .destroy() ejecuta el DELETE de inmediato,
+    //    NO existe .save() después de un destroy.
+    const deletedRows = await ModuleSubmission.destroy({
+      where: { id: submissionId },
+      force: true, // <--- CRÍTICO: 'force: true' obliga al borrado físico si el modelo tiene 'paranoid: true'
+    });
+
+    // Validamos si realmente se borró algo
+    if (deletedRows === 0) {
+      return res.status(404).json({
+        message: "No se encontró el entregable o ya fue eliminado.",
+      });
+    }
+
+    return res.status(200).json({
+      message: "El entregable ha sido borrado físicamente de manera correcta",
+      submissionId: submissionId,
+    });
+  } catch (error) {
+    console.error("Error al eliminar entregable:", error);
+    return res.status(500).json({
+      message: "Error interno del servidor",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   CreateSubmission,
   GetMySubmissions,
   GetAllSubmissionSubmitted,
   GetAllSubmissionReviewed,
+  deleteSubmissionPending,
 };

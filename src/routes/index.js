@@ -34,6 +34,8 @@ const ModuleSubmissionCertificationRoutes = require("./ModuleSubmissionCertifica
 const ModileEvaluationSubmitionCertificationRoutes = require("./ModuleEvaluationCertificationRoutes");
 const BillingRoutes = require("./BillingRoutes");
 const StoreRoutes = require("./StoreRoutes");
+const FormationRoutes = require("./FormationRoutes");
+const ModuleFormationsRoutes = require("./ModuleFormationsRoutes");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -67,4 +69,7 @@ router.use("/module-submission", ModuleSubmissionCertificationRoutes);
 router.use("/module-evaluation", ModileEvaluationSubmitionCertificationRoutes);
 router.use("/billing", BillingRoutes);
 router.use("/stores", StoreRoutes);
+router.use("/formations", FormationRoutes);
+router.use("/module-formations", ModuleFormationsRoutes);
+
 module.exports = router;

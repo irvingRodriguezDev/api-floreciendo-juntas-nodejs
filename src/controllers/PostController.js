@@ -51,7 +51,7 @@ const withDeadlockRetry = async (fn, retries = 3) => {
 const createPost = async (req, res) => {
   const userId = req.user.id;
 
-  const { title, content = "", pinned = false, durationHours } = req.body;
+  const { title, content = "", pinned = false, durationHours, type } = req.body;
   const isPinned = pinned === "true"; // Convierte el string "true" a booleano
   const hours = parseInt(durationHours, 10); // Convierte a número
 
@@ -110,6 +110,7 @@ const createPost = async (req, res) => {
             content: content.trim(),
             isPinned: isPinned,
             pinnedUntil: expiryDate,
+            type: type,
           },
           { transaction: t },
         );
@@ -158,7 +159,7 @@ const createPost = async (req, res) => {
         url: getS3Url(m.url), // URL Real de CloudFront/S3
       })),
     };
-    getIO().emit("postCommunityCreated", responsePost);
+    getIO().to(`community_${type}`).emit("postCommunityCreated", responsePost);
     // 5. RESPUESTA AL CLIENTE (Ahora sí con todo listo)
     res.json({
       success: true,
@@ -243,22 +244,23 @@ const createPost = async (req, res) => {
 };
 const getFeed = async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, type } = req.query;
     const userId = req.user.id;
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
     const offset = (page - 1) * limit;
 
     const hasSearch = Boolean(search && search.trim());
-
+    const baseCondition = type ? { type } : {};
     const searchCondition = hasSearch
       ? {
+          ...baseCondition,
           [Op.or]: [
             { content: { [Op.like]: `%${search}%` } },
             { title: { [Op.like]: `%${search}%` } },
           ],
         }
-      : {};
+      : baseCondition;
 
     const commonInclude = [
       {
@@ -337,7 +339,12 @@ const getFeed = async (req, res) => {
     if (hasSearch) {
       // Con búsqueda: sin paginación, sin separar fijados
       const { rows, count } = await Post.findAndCountAll({
-        where: searchCondition,
+        where: {
+          [Op.and]: [
+            baseCondition, // Aquí va el { type }
+            searchCondition, // Aquí va el { [Op.or]: [...] }
+          ],
+        },
         order: [
           ["isPinned", "DESC"],
           ["pinnedUntil", "DESC"],
@@ -354,7 +361,7 @@ const getFeed = async (req, res) => {
       const pinnedRows =
         page === 1
           ? await Post.findAll({
-              where: { isPinned: true },
+              where: { ...baseCondition, isPinned: true },
               order: [
                 ["pinnedUntil", "DESC"],
                 ["createdAt", "DESC"],
@@ -364,7 +371,7 @@ const getFeed = async (req, res) => {
             })
           : [];
 
-      const normalWhere = { isPinned: false };
+      const normalWhere = { ...baseCondition, isPinned: false };
 
       const { rows: normalRows, count } = await Post.findAndCountAll({
         where: normalWhere,

@@ -29,6 +29,10 @@ const Post = sequelize.define(
       type: DataTypes.ENUM("active", "deleted"),
       defaultValue: "active",
     },
+    type: {
+      type: DataTypes.ENUM("floreciendo-juntas", "servicios", "productos"),
+      defaultValue: "floreciendo-juntas",
+    },
     isPinned: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,

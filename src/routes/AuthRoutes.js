@@ -18,7 +18,7 @@ const router = express.Router();
 
 router.post("/register", verifyCaptcha, register); // usuario normal
 router.post("/reset-password", verifyCaptcha, resetPassword); // usuario normal
-router.post("/login", verifyCaptcha, login);
+router.post("/login", login);
 router.post(
   "/uploadProfileImage",
   upload.single("file"),
