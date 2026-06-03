@@ -1,28 +1,18 @@
-const { format, subMonths } = require("date-fns");
+// controllers/raffleController.js
+const { format } = require("date-fns");
 const getS3Url = require("../../helpers/getS3Url");
-const {
-  User,
-  Subscription,
-  PointEvent,
-  MonthlyPrize,
-  RaffleWinner,
-  Address,
-} = require("../../models");
+const { User, MonthlyPrize, RaffleWinner } = require("../../models");
 const { getEligibleUsers, getTop100Pool } = require("../../helpers/raffle");
-const { Op } = require("sequelize");
 const sequelize = require("../../config/db");
-const { response } = require("express");
+
 const getAllUsers = async (req, res) => {
   try {
     const allUsers = await User.findAll();
-
     const formatted = allUsers.map((c) => ({
       ...c.toJSON(),
       profileImageUrl: c.profileImage ? getS3Url(c.profileImage) : null,
     }));
-    return res.status(200).json({
-      users: formatted,
-    });
+    return res.status(200).json({ users: formatted });
   } catch (error) {
     console.error("Error al obtener los usuarios:", error);
     return res.status(500).json({
@@ -31,20 +21,20 @@ const getAllUsers = async (req, res) => {
     });
   }
 };
+
 const eligibleUsers = async (req, res) => {
   try {
     const users = await getEligibleUsers();
     return res.status(200).json({ users });
   } catch (error) {
     console.log(error, "error en elegible users");
-
     return res.status(500).json({ error: error.message });
   }
 };
+
 const runRaffleOneWinner = async (req, res) => {
   const now = new Date();
   const currentMonth = format(now, "yyyy-MM");
-  const lastMonth = format(subMonths(now, 1), "yyyy-MM");
 
   try {
     let finalResult;
@@ -67,7 +57,7 @@ const runRaffleOneWinner = async (req, res) => {
         .filter((p) => p.status === "awarded")
         .map((p) => p.id);
 
-      // ── 3. Siguiente premio disponible (en orden de creación) ───────────────
+      // ── 3. Siguiente premio disponible ──────────────────────────────────────
       const prize = monthlyPrizes.find((p) => !awardedIds.includes(p.id));
 
       if (!prize) {
@@ -77,31 +67,38 @@ const runRaffleOneWinner = async (req, res) => {
       const prizePosition =
         monthlyPrizes.findIndex((p) => p.id === prize.id) + 1;
 
-      // ── 4. Excluir ganadores del mes anterior (exclusión GLOBAL) ────────────
+      // ── 4. Excluir ganadores HISTÓRICOS (Exclusión GLOBAL y absoluta) ───────
+      // Eliminamos el filtro 'raffle_month' para que nadie que haya ganado jamás pueda repetir.
       const winnersToExclude = await RaffleWinner.findAll({
-        where: {
-          raffle_month: { [Op.in]: [currentMonth, lastMonth] },
-        },
         attributes: ["user_id"],
         raw: true,
         transaction: t,
       });
 
-      const excludedIds = winnersToExclude.map((w) => w.user_id);
+      // Mapeo tolerante a variaciones de nomenclatura por culpa de 'raw: true'
+      const excludedIds = winnersToExclude
+        .map((w) => w.user_id || w.userId)
+        .filter((id) => id !== undefined && id !== null && id !== "");
 
-      // ── 5. Seleccionar pool según isPremium ─────────────────────────────────
+      // Convertimos a números para operaciones en memoria de forma segura
+      const numericExcludedIds = excludedIds.map(Number);
+
+      // ── 5. Seleccionar pool según el tipo de premio ─────────────────────────
       let winnerUser = null;
 
       if (prize.isPremium) {
         // ────────────────────────────────────────────────────────────────────
-        // POOL PREMIUM — Top 100 por puntos del mes
-        // Sorteo EQUITATIVO: cada persona tiene la misma probabilidad.
-        // Ya ganaron su lugar en el Top 100 por mérito, el azar es parejo.
+        // POOL PREMIUM — Top 100 por puntos (Sorteo Equitativo)
         // ────────────────────────────────────────────────────────────────────
-        const top100 = await getTop100Pool({
-          excludeIds: excludedIds,
+        let top100 = await getTop100Pool({
+          excludeIds: numericExcludedIds,
           transaction: t,
         });
+
+        // Escudo secundario en memoria por si el operador SQL falló
+        top100 = top100.filter(
+          (user) => !numericExcludedIds.includes(Number(user.id)),
+        );
 
         if (!top100.length) {
           throw new Error(
@@ -113,29 +110,33 @@ const runRaffleOneWinner = async (req, res) => {
         winnerUser = top100[randomIndex];
       } else {
         // ────────────────────────────────────────────────────────────────────
-        // POOL NORMAL — todos los suscritos activos
-        // Sorteo PONDERADO por puntos²: más puntos = más tickets = más chances.
+        // POOL NORMAL — Sorteo PONDERADO por puntos²
         // ────────────────────────────────────────────────────────────────────
-        const eligibleUsers = await getEligibleUsers({
-          excludeIds: excludedIds,
+        let eligibleUsersList = await getEligibleUsers({
+          excludeIds: numericExcludedIds,
           transaction: t,
         });
 
-        if (!eligibleUsers.length) {
+        // Escudo secundario en memoria por si el operador SQL falló
+        eligibleUsersList = eligibleUsersList.filter(
+          (user) => !numericExcludedIds.includes(Number(user.id)),
+        );
+
+        if (!eligibleUsersList.length) {
           throw new Error(
             "No hay usuarios elegibles para el sorteo de este premio.",
           );
         }
 
-        // Peso = puntos² (mínimo 1 para no dejar fuera a usuarios sin puntos)
-        const totalTickets = eligibleUsers.reduce((sum, user) => {
+        // Calcular el total de tickets (puntos²)
+        const totalTickets = eligibleUsersList.reduce((sum, user) => {
           const points = user.total_points > 0 ? user.total_points : 1;
           return sum + Math.pow(points, 2);
         }, 0);
 
         let random = Math.floor(Math.random() * totalTickets);
 
-        for (const user of eligibleUsers) {
+        for (const user of eligibleUsersList) {
           const points = user.total_points > 0 ? user.total_points : 1;
           const tickets = Math.pow(points, 2);
 
@@ -148,11 +149,18 @@ const runRaffleOneWinner = async (req, res) => {
         }
       }
 
+      // Failsafe final: Si por algún motivo místico se llegó hasta aquí con un clon, cancelamos
+      if (winnerUser && numericExcludedIds.includes(Number(winnerUser.id))) {
+        throw new Error(
+          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`,
+        );
+      }
+
       if (!winnerUser) {
         throw new Error("No se pudo determinar un ganador.");
       }
 
-      // ── 6. Registrar ganador y marcar premio como entregado ─────────────────
+      // ── 6. Registrar ganador histórico y actualizar premio ──────────────────
       const winnersCount = await RaffleWinner.count({
         where: { raffle_month: currentMonth },
         transaction: t,
@@ -202,9 +210,7 @@ const obtainWinnersOfMonth = async (req, res) => {
     const { month } = req.query;
 
     const winners = await RaffleWinner.findAll({
-      where: {
-        raffle_month: month,
-      },
+      where: { raffle_month: month },
       include: [
         {
           model: User,

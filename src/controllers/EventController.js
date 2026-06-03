@@ -738,8 +738,8 @@ const buyTicketOpen = async (req, res) => {
       customer_email: buyerEmail,
       expires_at: Math.floor(expiresAt.getTime() / 1000),
 
-      success_url: `https://eventoswapizima.com/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `https://eventoswapizima.com/payment-error`,
+      success_url: `https://eventoswapizima.com/convencion-wtc-mexico/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://eventoswapizima.com/convencion-wtc-mexico/payment-error`,
     });
 
     await t.commit();

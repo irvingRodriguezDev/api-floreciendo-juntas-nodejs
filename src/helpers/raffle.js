@@ -1,39 +1,27 @@
 // helpers/raffle.js
-// Dos pools de participantes:
-//   getEligibleUsers   → pool normal  (todas las suscripciones activas)
-//   getTop100Pool      → pool premium (Top 100 por puntos del mes, sin ganadores recientes)
-
-const { Op, fn, col, literal } = require("sequelize");
+const { Op } = require("sequelize");
 const { User, Subscription } = require("../models");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pool normal — todas las suscripciones activas, excluyendo ganadores globales
+// Pool normal — todas las suscripciones activas
 // ─────────────────────────────────────────────────────────────────────────────
 const getEligibleUsers = async ({
   excludeIds = [],
   transaction = null,
 } = {}) => {
+  // Limpiar el array de IDs para asegurar que solo viajen números/IDs válidos
+  const cleanExcludeIds = excludeIds
+    .map(Number)
+    .filter((id) => !isNaN(id) && id !== 0);
+
   const users = await User.findAll({
-    attributes: [
-      "id",
-      "name",
-      "email",
-      "phone",
-      "total_points",
-      [fn("COUNT", col("subscriptions.id")), "subscriptionCount"],
-    ],
+    attributes: ["id", "name", "email", "phone", "total_points"],
     include: [
       {
         model: Subscription,
         as: "subscriptions",
         required: true,
-        attributes: [
-          "status",
-          "stripe_subscription_id",
-          "stripe_customer_id",
-          "start_date",
-          "next_renewal",
-        ],
+        attributes: [], // No aplanamos atributos de suscripción para evitar filas duplicadas con raw: true
         where: {
           status: {
             [Op.in]: ["active", "past_due"],
@@ -43,21 +31,12 @@ const getEligibleUsers = async ({
     ],
     where: {
       roleId: 4,
-      ...(excludeIds.length > 0 && {
-        id: { [Op.notIn]: excludeIds },
+      ...(cleanExcludeIds.length > 0 && {
+        id: { [Op.notIn]: cleanExcludeIds },
       }),
     },
-    // AGREGAR AQUÍ TODAS LAS COLUMNAS DE SUBSCRIPTIONS QUE ESTÁN EN ATTRIBUTES
-    group: [
-      "User.id",
-      "subscriptions.id", // Agregamos el ID de la suscripción
-      "subscriptions.status",
-      "subscriptions.stripe_subscription_id",
-      "subscriptions.stripe_customer_id",
-      "subscriptions.start_date",
-      "subscriptions.next_renewal",
-    ],
-    having: literal("COUNT(subscriptions.id) = 1"),
+    // Agrupamos única y exclusivamente por el ID del usuario para asegurar unicidad
+    group: ["User.id"],
     raw: true,
     transaction,
   });
@@ -69,23 +48,16 @@ const getEligibleUsers = async ({
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pool premium — Top 100 por puntos del mes actual, excluyendo ganadores globales
-//
-// IMPORTANTE: cuando implementes user_points_monthly, cambia el ORDER BY
-// a los puntos del mes en curso en lugar de total_points.
-// Por ahora usa total_points como aproximación hasta tener esa tabla.
+// Pool premium — Top 100 por puntos del mes actual
 // ─────────────────────────────────────────────────────────────────────────────
 const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
+  const cleanExcludeIds = excludeIds
+    .map(Number)
+    .filter((id) => !isNaN(id) && id !== 0);
+
   const users = await User.findAll({
-    subQuery: false, // ← evita que Sequelize genere la subquery problemática
-    attributes: [
-      "id",
-      "name",
-      "email",
-      "phone",
-      "total_points",
-      [fn("COUNT", col("subscriptions.id")), "subscriptionCount"],
-    ],
+    subQuery: false, // Evita que Sequelize genere la subquery problemática con el LIMIT y GROUP BY
+    attributes: ["id", "name", "email", "phone", "total_points"],
     include: [
       {
         model: Subscription,
@@ -101,14 +73,13 @@ const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
     ],
     where: {
       roleId: 4,
-      ...(excludeIds.length > 0 && {
-        id: { [Op.notIn]: excludeIds },
+      ...(cleanExcludeIds.length > 0 && {
+        id: { [Op.notIn]: cleanExcludeIds },
       }),
     },
     group: ["User.id"],
-    having: literal("COUNT(subscriptions.id) = 1"),
     order: [["total_points", "DESC"]],
-    limit: 30,
+    limit: 100, // Ajustado a 100 para cumplir con el Top 100 real
     raw: true,
     transaction,
   });
@@ -118,4 +89,5 @@ const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
     total_points: Number(u.total_points) || 0,
   }));
 };
+
 module.exports = { getEligibleUsers, getTop100Pool };

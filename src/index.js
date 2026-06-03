@@ -31,6 +31,7 @@ const corsOptions = {
     "https://www.admin.floreciendojuntas.com",
     "https://eventoswapizima.com",
     "https://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:3000",
     "http://localhost:5173",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
