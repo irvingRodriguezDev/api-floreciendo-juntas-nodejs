@@ -13,6 +13,9 @@ const getS3Url = require("../helpers/getS3Url");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const Sequelize = require("sequelize");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+const fs = require("fs");
+const path = require('path');
+const fontkit = require("@pdf-lib/fontkit");
 
 //funcion para crear el curso
 const createCourse = async (req, res) => {
@@ -670,7 +673,7 @@ const downloadCertificate = async (req, res) => {
     if (!certificado) {
       return res
         .status(404)
-        .json({ message: "Certificado no encontrado para este curso" });
+        .json({ message: "Reconocimiento no encontrado para este curso" });
     }
 
     const { s3_key_certificate } = certificado;
@@ -682,42 +685,70 @@ const downloadCertificate = async (req, res) => {
     const existingPdfBytes = await fetch(pdfUrl).then((r) => r.arrayBuffer());
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
+    // ✅ REGISTRAR FONTKIT (Igual que en tu otro código exitoso)
+    pdfDoc.registerFontkit(fontkit);
+
     const pages = pdfDoc.getPages();
     const page = pages[0];
 
-    const width = page.getWidth();
-    const height = page.getHeight();
+    const { width, height } = page.getSize();
 
-    // Fuente (luego te ayudo a cambiarla por una Script elegante)
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    // ========================================================
+    // 🎨 FUENTE CURSIVA PARA NOMBRE CON CENTRADO DINÁMICO
+    // ========================================================
+    const fontPath = path.join(__dirname, "../fonts/Ephesis-Regular.ttf");
+    const fontBytes = fs.readFileSync(fontPath);
+    const customFont = await pdfDoc.embedFont(fontBytes);
 
-    // 4️⃣ Dibujar el nombre centrado horizontalmente en una banda de 5cm
-    const textSize = 42;
-    const textWidth = font.widthOfTextAtSize(userName, textSize);
-    const xCentered = (width - textWidth) / 2;
+    // 🔧 ÁREA DISPONIBLE PARA EL NOMBRE (Zona segura)
+    const nameAreaLeft = 75;
+    const nameAreaRight = width - 75;
+    const availableWidth = nameAreaRight - nameAreaLeft;
 
-    // 5cm desde la parte baja (aprox 140px a 72dpi)
+    // Ajustamos la altura vertical donde se pintará en este diploma (280px)
     const yPosition = 280;
 
+    // 🔧 CALCULAR TAMAÑO DE FUENTE DINÁMICO
+    let textSize = 55; // Tamaño máximo deseado
+    const minTextSize = 35; // Tamaño mínimo para nombres muy largos
+    let textWidth = customFont.widthOfTextAtSize(userName, textSize);
+
+    // Si el texto es muy ancho, reducir el tamaño proporcionalmente
+    while (textWidth > availableWidth && textSize > minTextSize) {
+      textSize -= 1;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    // Si aún es muy largo con el tamaño mínimo, forzar que quepa
+    if (textWidth > availableWidth) {
+      textSize = (availableWidth / textWidth) * textSize;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    // ✅ CENTRADO REAL basado en el ancho del texto
+    const xCentered = nameAreaLeft + (availableWidth - textWidth) / 2;
+
+    // Dibujar el nombre en el PDF con Ephesis-Regular
     page.drawText(userName, {
       x: xCentered,
       y: yPosition,
       size: textSize,
-      font,
-      color: rgb(0.1, 0.1, 0.4),
+      font: customFont,
+      color: rgb(0.0, 0.0, 0.0), // Mantenemos tu color azul de cursos
     });
+    // ========================================================
 
     const pdfBytes = await pdfDoc.save();
 
     // 5️⃣ Enviar PDF para descarga
-    const fileName = `certificado_${userName.replace(/ /g, "_")}.pdf`;
+    const fileName = `reconocimiento_${userName.replace(/ /g, "_")}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error generando certificado" });
+    console.error("Error generando reconocimiento:", error);
+    res.status(500).json({ message: "Error generando reconocimiento" });
   }
 };
 
