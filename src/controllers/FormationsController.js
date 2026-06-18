@@ -8,6 +8,11 @@ const {
   User,
 } = require("../models"); // Ajusta según tu estructura de modelos
 
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
+const fs = require("fs");
+const path = require('path');
+const fontkit = require("@pdf-lib/fontkit");
+
 // src/controllers/FormationsController.js
 
 // Controlador para Formations
@@ -186,7 +191,6 @@ const showFormation = async (req, res) => {
 const showFormationProgress = async (req, res) => {
   try {
     const { id } = req.params;
-    // Asumiendo que obtienes el ID del usuario desde un middleware de autenticación (JWT/Sesión)
     const userId = req.user.id;
 
     const formation = await Formations.findByPk(id, {
@@ -198,13 +202,12 @@ const showFormationProgress = async (req, res) => {
             {
               model: DeliveryFormations,
               as: "deliveries",
-              where: { userId: userId }, // <-- Filtramos estrictamente por el usuario actual
-              required: false, // <-- LEFT JOIN: Trae el módulo aunque no tenga entregables todavía
+              where: { userId },
+              required: false,
             },
           ],
         },
       ],
-      // Ordenamos los módulos de forma ascendente si es necesario
       order: [
         [{ model: FormationsModules, as: "modules_formations" }, "id", "ASC"],
       ],
@@ -214,7 +217,13 @@ const showFormationProgress = async (req, res) => {
       return res.status(404).json({ message: "Formación no encontrada" });
     }
 
-    return res.status(200).json(formation);
+    const formationData = formation.toJSON();
+
+    formationData.diploma = formationData.diploma
+      ? getS3Url(formationData.diploma)
+      : null;
+
+    return res.status(200).json(formationData);
   } catch (error) {
     console.error("Error al obtener el progreso de la formación:", error);
     return res.status(500).json({ message: "Error interno del servidor" });
@@ -435,6 +444,123 @@ const reviewModuleDelivery = async (req, res) => {
   }
 };
 
+const downloadDiploma = async (req, res) => {
+  try {
+    const { userName, formationId } = req.query;
+
+    if (!userName) {
+      return res
+        .status(400)
+        .json({ message: "El nombre del usuario es obligatorio" });
+    }
+
+    if (!formationId) {
+      return res
+        .status(400)
+        .json({ message: "El ID de la formación es obligatorio" });
+    }
+
+    // 1️⃣ Buscar la formación y verificar que tenga diploma
+    const formation = await Formations.findByPk(formationId);
+
+    if (!formation) {
+      return res.status(404).json({ message: "Formación no encontrada" });
+    }
+
+    if (!formation.diploma) {
+      return res
+        .status(404)
+        .json({ message: "Esta formación no tiene diploma disponible" });
+    }
+
+    // 2️⃣ Verificar que el usuario tenga todas las entregas aceptadas
+    const userId = req.user.id;
+
+    const modules = await FormationsModules.findAll({
+      where: { formationId },
+      include: [
+        {
+          model: DeliveryFormations,
+          as: "deliveries",
+          where: { userId, accepted: true },
+          required: true, // INNER JOIN: solo módulos con entrega aceptada
+        },
+      ],
+    });
+
+    const totalModules = await FormationsModules.count({ where: { formationId } });
+
+    if (modules.length < totalModules) {
+      return res.status(403).json({
+        message: "Debes tener todas las evidencias aceptadas para descargar el diploma",
+      });
+    }
+
+    // 3️⃣ Obtener URL pública del diploma base desde S3
+    const pdfUrl = getS3Url(formation.diploma);
+
+    // 4️⃣ Descargar el PDF base desde S3
+    const existingPdfBytes = await fetch(pdfUrl).then((r) => r.arrayBuffer());
+    const pdfDoc = await PDFDocument.load(existingPdfBytes);
+
+    // ✅ Registrar fontkit
+    pdfDoc.registerFontkit(fontkit);
+
+    const pages = pdfDoc.getPages();
+    const page = pages[0];
+    const { width } = page.getSize();
+
+    // 5️⃣ Cargar fuente Ephesis-Regular (misma que en cursos)
+    const fontPath = path.join(__dirname, "../fonts/Ephesis-Regular.ttf");
+    const fontBytes = fs.readFileSync(fontPath);
+    const customFont = await pdfDoc.embedFont(fontBytes);
+
+    // 6️⃣ Área disponible y posición vertical
+    const nameAreaLeft = 85;
+    const nameAreaRight = width - 75;
+    const availableWidth = nameAreaRight - nameAreaLeft;
+    const yPosition = 465;
+
+    // 7️⃣ Calcular tamaño de fuente dinámico
+    let textSize = 55;
+    const minTextSize = 35;
+    let textWidth = customFont.widthOfTextAtSize(userName, textSize);
+
+    while (textWidth > availableWidth && textSize > minTextSize) {
+      textSize -= 1;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    if (textWidth > availableWidth) {
+      textSize = (availableWidth / textWidth) * textSize;
+      textWidth = customFont.widthOfTextAtSize(userName, textSize);
+    }
+
+    // 8️⃣ Centrado real
+    const xCentered = nameAreaLeft + (availableWidth - textWidth) / 2;
+
+    // 9️⃣ Dibujar el nombre en el PDF
+    page.drawText(userName, {
+      x: xCentered,
+      y: yPosition,
+      size: textSize,
+      font: customFont,
+      color: rgb(0.0, 0.0, 0.0),
+    });
+
+    const pdfBytes = await pdfDoc.save();
+
+    // 🔟 Enviar PDF para descarga
+    const fileName = `Diploma_${userName.replace(/ /g, "_")}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(Buffer.from(pdfBytes));
+  } catch (error) {
+    console.error("Error generando diploma de formación:", error);
+    res.status(500).json({ message: "Error generando el diploma" });
+  }
+};
+
 module.exports = {
   GetActiveFormations,
   createFormation,
@@ -446,4 +572,5 @@ module.exports = {
   submitModuleDelivery,
   getPendingDeliveries,
   reviewModuleDelivery,
+  downloadDiploma,
 };
