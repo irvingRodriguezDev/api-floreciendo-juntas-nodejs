@@ -6,6 +6,8 @@ const getProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
+
+    return;
     if (isNaN(userId)) {
       return res
         .status(400)

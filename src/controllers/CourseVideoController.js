@@ -5,7 +5,7 @@ const { uploadToS3 } = require("../config/s3");
 const MAX_SIZE_GB = 20;
 const uploadVideo = async (req, res) => {
   try {
-    const { courseId } = req.body;
+    const { courseId, title, order } = req.body;
     const file = req.file;
 
     if (!file) return res.status(400).json({ msg: "Video requerido" });
@@ -17,6 +17,8 @@ const uploadVideo = async (req, res) => {
       where: { courseId },
       defaults: {
         courseId,
+        title,
+        order,
         s3Key: file.originalname,
         cloudfrontUrl: url,
         status: "listo",

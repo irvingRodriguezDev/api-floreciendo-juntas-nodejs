@@ -18,6 +18,13 @@ const CourseVideo = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    title: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    order: {
+      type: DataTypes.INTEGER,
+    },
     durationSeconds: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
@@ -47,7 +54,7 @@ const CourseVideo = sequelize.define(
   {
     tableName: "course_videos",
     timestamps: true,
-  }
+  },
 );
 
 // 🔗 Asociaciones

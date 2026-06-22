@@ -14,7 +14,7 @@ const deleteFromS3 = require("../helpers/deleteFromS3");
 const Sequelize = require("sequelize");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const fs = require("fs");
-const path = require('path');
+const path = require("path");
 const fontkit = require("@pdf-lib/fontkit");
 
 //funcion para crear el curso
@@ -171,6 +171,11 @@ const getNewCourses = async (req, res) => {
         required: false, // LEFT JOIN: incluso si no tiene imágenes
         attributes: ["id", "s3_key"],
       },
+      {
+        model: CourseVideo,
+        as: "videos",
+        where: { is_active: true },
+      },
     ];
 
     // 🔹 Si hay usuario autenticado, incluir progreso del curso
@@ -187,9 +192,10 @@ const getNewCourses = async (req, res) => {
     // 🔹 Obtener los cursos más recientes
     const courses = await Course.findAll({
       include: includes,
+      where: { isActive: true },
       order: [["createdAt", "DESC"]],
       limit: 10,
-      attributes: ["id", "title", "description", "createdAt"],
+      attributes: ["id", "title", "description", "createdAt", "slug"],
     });
 
     // 🔹 Transformar resultados
@@ -210,9 +216,11 @@ const getNewCourses = async (req, res) => {
       return {
         id: data.id,
         title: data.title,
+        slug: data.slug,
         description: data.description,
         createdAt: data.createdAt,
         cover_image_url: coverImageUrl,
+        videosCount: data.videos.length,
         user_progress_percentage: userProgress,
       };
     });
@@ -316,7 +324,7 @@ const getCoursesBySystem = async (req, res) => {
 
     // ⚙️ Configuración base de consulta
     const queryOptions = {
-      where: { system_id },
+      where: { system_id, isActive: true },
       include: [
         {
           model: ImageCourses,
@@ -326,7 +334,7 @@ const getCoursesBySystem = async (req, res) => {
         },
         {
           model: CourseVideo,
-          as: "video",
+          as: "videos",
           where: { is_active: true },
           required: false, // 👈 para que también se muestren los cursos sin video
         },
@@ -398,6 +406,14 @@ const getTopViewedCourses = async (req, res) => {
         "courseId",
         [Sequelize.fn("COUNT", Sequelize.col("userId")), "viewsCount"],
       ],
+      include: [
+        {
+          model: Course,
+          as: "course",
+          attributes: ["id", "title", "isActive"],
+          where: { isActive: true },
+        },
+      ],
       group: ["courseId"],
       order: [[Sequelize.literal("viewsCount"), "DESC"]],
       limit: 10,
@@ -410,8 +426,8 @@ const getTopViewedCourses = async (req, res) => {
 
     // 2. Traer los datos completos de esos cursos
     const courses = await Course.findAll({
-      where: { id: courseIds },
-      attributes: ["id", "title", "description"],
+      where: { id: courseIds, isActive: true },
+      attributes: ["id", "title", "description", "slug"],
       include: [
         {
           model: ImageCourses,
@@ -419,6 +435,11 @@ const getTopViewedCourses = async (req, res) => {
           attributes: ["s3_key"],
           where: { is_active: true },
           required: false,
+        },
+        {
+          model: CourseVideo,
+          as: "videos",
+          where: { courseId: courseIds },
         },
       ],
     });
@@ -434,6 +455,8 @@ const getTopViewedCourses = async (req, res) => {
         courseId: row.courseId,
         viewsCount: Number(row.viewsCount),
         title: course?.title ?? null,
+        slug: course?.slug ?? null,
+        videosCount: course.videos.length,
         description: course?.description ?? null,
         cover_image_url: firstImage ? getS3Url(firstImage.s3_key) : null,
       };
@@ -462,50 +485,61 @@ const getCourseById = async (req, res) => {
         },
         {
           model: CourseVideo,
-          as: "video", // Asegúrate de usar el mismo alias definido en la asociación
+          as: "videos",
           where: { is_active: true },
-          required: false, // el curso puede no tener video aún
+          required: false,
         },
         {
           model: CertificateCourse,
           as: "certificates",
           where: { is_active: true },
-          required: false, // si no hay imagen activa, igualmente trae el curso
+          required: false,
         },
       ],
+      // 🔥 Garantiza que las partes/clases se rendericen en el orden correcto en el feed
+      order: [[{ model: CourseVideo, as: "videos" }, "id", "ASC"]],
     });
 
-    // ⚠️ Validar si existe
     if (!course) {
       return res.status(404).json({ msg: "Curso no encontrado" });
     }
 
-    // ✅ Generar URL completa para las imágenes desde S3
-    const formattedCourse = {
-      ...course.toJSON(),
+    const courseJson = course.toJSON();
 
-      cover_image_url: course.images?.[0]
-        ? getS3Url(course.images[0].s3_key)
+    // ✅ Formateamos respetando el estándar de paths relativos del S3 helper
+    const formattedCourse = {
+      ...courseJson,
+
+      cover_image_url: courseJson.images?.[0]
+        ? getS3Url(courseJson.images[0].s3_key)
         : null,
 
-      video_url: course.video?.cloudfrontUrl || null,
+      videos:
+        courseJson.videos?.map((vid) => ({
+          ...vid,
+          url: vid.cloudfrontUrl, // CloudFront maneja la distribución global flat
+        })) || [],
 
-      images: course.images?.map((img) => ({
-        ...img.toJSON(),
+      video_url: courseJson.videos?.[0]?.cloudfrontUrl || null,
+
+      images: courseJson.images?.map((img) => ({
+        ...img,
         url: getS3Url(img.s3_key),
       })),
 
-      certificate_url: course.certificates?.[0]
-        ? getS3Url(course.certificates[0].s3_key_certificate)
+      certificate_url: courseJson.certificates?.[0]
+        ? getS3Url(courseJson.certificates[0].s3_key_certificate)
         : null,
 
-      // 🔥 AQUÍ agregamos el workbook
-      workbookUrl: course.workbookUrl ? getS3Url(course.workbookUrl) : null,
+      // Se procesa el path relativo de forma segura
+      workbookUrl: courseJson.workbookUrl
+        ? getS3Url(courseJson.workbookUrl)
+        : null,
     };
 
     return res.status(200).json(formattedCourse);
   } catch (error) {
-    console.error("❌ Error al obtener el curso:", error);
+    console.error("❌ Error al obtener el curso por slug:", error);
     return res.status(500).json({
       msg: "Error interno al obtener el curso",
       error: error.message,
