@@ -192,9 +192,17 @@ const updateVideo = async (req, res) => {
   }
 };
 const initMultipartUpload = async (req, res) => {
-  const { fileName, fileType, courseId, durationSeconds } = req.body;
+  const { fileName, fileType, courseId, durationSeconds, title, order } =
+    req.body;
 
-  if (!fileName || !fileType || !courseId || !durationSeconds) {
+  if (
+    !fileName ||
+    !fileType ||
+    !courseId ||
+    !durationSeconds ||
+    !title ||
+    !order
+  ) {
     return res.status(400).json({ message: "Datos incompletos" });
   }
 
@@ -206,7 +214,7 @@ const initMultipartUpload = async (req, res) => {
     const result = await sequelize.transaction(async (t) => {
       // 1️⃣ Desactivar videos anteriores
       await CourseVideo.update(
-        { is_active: false },
+        { is_active: true },
         { where: { courseId }, transaction: t },
       );
 
@@ -218,6 +226,8 @@ const initMultipartUpload = async (req, res) => {
           status: "subiendo",
           is_active: true,
           durationSeconds,
+          title,
+          order,
         },
         { transaction: t },
       );

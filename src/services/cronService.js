@@ -10,33 +10,42 @@ const { getIO } = require("../socket");
  */
 const initCronJobs = () => {
   console.log("🚀 Servicio de Cron Jobs iniciado...");
-  // ==============================
-  // Viewers en tiempo real cada 2 minutos
-  // ==============================
-  cron.schedule("*/2 * * * *", async () => {
-    try {
-      const activeLives = await Live.findAll({
-        where: { status: "live" },
-        attributes: ["id", "aws_channel_arn"],
-      });
 
-      if (!activeLives.length) return;
+  // cron.schedule("*/2 * * * *", async () => {
+  //   try {
+  //     const activeLives = await Live.findAll({
+  //       where: { status: "live" },
+  //       attributes: ["id", "aws_channel_arn"],
+  //     });
 
-      const io = getIO();
+  //     if (!activeLives.length) return;
 
-      for (const live of activeLives) {
-        try {
-          const streamData = await getStreamViewers(live.aws_channel_arn);
-          io.to(`live_${live.id}`).emit("ivs_viewer_count", streamData.viewers);
-          console.log(`👁 Live #${live.id} → ${streamData.viewers} viewers`);
-        } catch (err) {
-          console.error(`❌ Error viewers live #${live.id}:`, err);
-        }
-      }
-    } catch (err) {
-      console.error("❌ Error cron viewers:", err);
-    }
-  });
+  //     const io = getIO();
+
+  //     for (const live of activeLives) {
+  //       try {
+  //         const streamData = await getStreamViewers(live.aws_channel_arn);
+
+  //         // 1. Guardar en memoria global para los nuevos usuarios que entren
+  //         global.lastIvsViewers[live.id] = streamData.viewers;
+
+  //         // 2. Emitir el objeto estructurado a los que ya están adentro
+  //         io.to(`live_${live.id}`).emit("ivs_viewer_count", {
+  //           liveId: live.id,
+  //           viewers: streamData.viewers,
+  //         });
+
+  //         console.log(
+  //           `👁 Live #${live.id} → ${streamData.viewers} viewers guardados y emitidos`,
+  //         );
+  //       } catch (err) {
+  //         console.error(`❌ Error viewers live #${live.id}:`, err);
+  //       }
+  //     }
+  //   } catch (err) {
+  //     console.error("❌ Error cron viewers:", err);
+  //   }
+  // });
 
   cron.schedule(
     "0 3 * * *",

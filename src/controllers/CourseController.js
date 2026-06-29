@@ -321,10 +321,47 @@ const getCoursesBySystem = async (req, res) => {
     }
 
     const isSearchMode = search.trim() !== "";
+    const parsedLimit = parseInt(limit, 10) || 10;
+    const parsedPage = parseInt(page, 10) || 1;
+    const offset = (parsedPage - 1) * parsedLimit;
 
-    // ⚙️ Configuración base de consulta
-    const queryOptions = {
-      where: { system_id, isActive: true },
+    // 🔍 1. Construir el filtro del Curso Base
+    const courseWhere = { system_id, isActive: true };
+
+    if (isSearchMode) {
+      const searchPattern = `%${search.trim()}%`;
+      courseWhere[Op.or] = [
+        { title: { [Op.like]: searchPattern } },
+        { description: { [Op.like]: searchPattern } },
+      ];
+    }
+
+    // 🌸 PASO 1: Obtener el conteo total y los IDs paginados limpios de la tabla principal
+    // Al usar attributes: ['id'] y ningún include, el SQL es ultra plano y veloz (cero duplicados)
+    const { count, rows: primaryCourses } = await Course.findAndCountAll({
+      where: courseWhere,
+      attributes: ["id"],
+      limit: parsedLimit,
+      offset: offset,
+      order: [["createdAt", "DESC"]],
+    });
+
+    // Si la consulta no arrojó resultados (ej. una búsqueda vacía), cortamos temprano de forma segura
+    if (count === 0) {
+      return res.status(200).json({
+        totalItems: 0,
+        totalPages: 0,
+        currentPage: parsedPage,
+        courses: [],
+      });
+    }
+
+    // Extraemos el array plano de IDs (Ej: [12, 15, 23...])
+    const targetIds = primaryCourses.map((c) => c.id);
+
+    // 🌸 PASO 2: Traer los cursos completos con sus relaciones usando solo los IDs del paso anterior
+    const coursesWithRelations = await Course.findAll({
+      where: { id: targetIds }, // Filtrado atómico
       include: [
         {
           model: ImageCourses,
@@ -336,65 +373,37 @@ const getCoursesBySystem = async (req, res) => {
           model: CourseVideo,
           as: "videos",
           where: { is_active: true },
-          required: false, // 👈 para que también se muestren los cursos sin video
+          required: false,
         },
       ],
       order: [["createdAt", "DESC"]],
-    };
+    });
 
-    // 🟢 Si hay búsqueda, la agregamos sin perder el filtro por sistema
-    if (isSearchMode) {
-      queryOptions.where = {
-        system_id,
-        [Op.or]: [
-          { title: { [Op.like]: `%${search.trim()}%` } },
-          { description: { [Op.like]: `%${search.trim()}%` } },
-        ],
+    // 🔄 Mapeo seguro para el Frontend
+    const formatted = coursesWithRelations.map((c) => {
+      const courseJson = c.toJSON();
+      return {
+        ...courseJson,
+        cover_image_url: courseJson.images?.[0]
+          ? getS3Url(courseJson.images[0].s3_key)
+          : null,
+        video_url: courseJson.videos?.[0]?.cloudfrontUrl || null,
       };
+    });
 
-      const courses = await Course.findAll(queryOptions);
-
-      const formatted = courses.map((c) => ({
-        ...c.toJSON(),
-        cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
-        video_url: c.video?.cloudfrontUrl || null,
-      }));
-
-      return res.json({
-        totalItems: formatted.length,
-        totalPages: 1,
-        currentPage: 1,
-        courses: formatted,
-      });
-    }
-
-    // 🟡 Modo paginación normal
-    const parsedLimit = parseInt(limit, 10) || 10;
-    const parsedPage = parseInt(page, 10) || 1;
-    const offset = (parsedPage - 1) * parsedLimit;
-
-    queryOptions.limit = parsedLimit;
-    queryOptions.offset = offset;
-
-    const result = await Course.findAndCountAll(queryOptions);
-
-    const formatted = result.rows.map((c) => ({
-      ...c.toJSON(),
-      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
-      video_url: c.video?.cloudfrontUrl || null,
-    }));
-
-    return res.json({
-      totalItems: result.count,
-      totalPages: Math.ceil(result.count / parsedLimit),
+    // Respuesta única estandarizada
+    return res.status(200).json({
+      totalItems: count, // Conteo real exacto de la tabla base (32)
+      totalPages: Math.ceil(count / parsedLimit),
       currentPage: parsedPage,
       courses: formatted,
     });
   } catch (error) {
-    console.error("❌ Error al obtener cursos:", error);
-    res
-      .status(500)
-      .json({ msg: "Error al obtener los cursos", error: error.message });
+    console.error("❌ Error fatal al obtener cursos por sistema:", error);
+    return res.status(500).json({
+      msg: "Error al obtener los cursos",
+      error: error.message,
+    });
   }
 };
 //topcursos
