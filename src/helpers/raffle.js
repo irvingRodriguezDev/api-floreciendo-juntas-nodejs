@@ -15,7 +15,14 @@ const getEligibleUsers = async ({
     .filter((id) => !isNaN(id) && id !== 0);
 
   const users = await User.findAll({
-    attributes: ["id", "name", "email", "phone", "total_points"],
+    attributes: [
+      "id",
+      "name",
+      "email",
+      "phone",
+      "total_points",
+      "tiktokUsername",
+    ],
     include: [
       {
         model: Subscription,
@@ -57,7 +64,14 @@ const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
 
   const users = await User.findAll({
     subQuery: false, // Evita que Sequelize genere la subquery problemática con el LIMIT y GROUP BY
-    attributes: ["id", "name", "email", "phone", "total_points"],
+    attributes: [
+      "id",
+      "name",
+      "email",
+      "phone",
+      "total_points",
+      "tiktokUsername",
+    ],
     include: [
       {
         model: Subscription,

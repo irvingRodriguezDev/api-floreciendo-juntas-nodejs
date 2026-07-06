@@ -35,7 +35,6 @@ const corsOptions = {
     "http://localhost:3000",
     "http://localhost:5173",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
-    "https://storm-northwest-render-arena.trycloudflare.com/",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

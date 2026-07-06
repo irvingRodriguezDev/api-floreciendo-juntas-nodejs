@@ -56,7 +56,7 @@ const login = async (req, res) => {
 // 2️⃣ REGISTRO LIMPIO
 const register = async (req, res) => {
   try {
-    const { password, email, name, phone, username } = req.body;
+    const { password, email, name, phone, username, tiktokUsername } = req.body;
 
     const exists = await User.findOne({ where: { email }, attributes: ["id"] });
 
@@ -76,6 +76,7 @@ const register = async (req, res) => {
       password: hashedPassword,
       roleId: 4,
       session_id: sessionId,
+      tiktokUsername: tiktokUsername || null, // Guardamos el tiktokUsername si viene
     });
 
     const token = jwt.sign(
@@ -115,6 +116,7 @@ const me = async (req, res) => {
         "phone",
         "roleId",
         "createdAt",
+        "tiktokUsername",
       ],
       include: [
         {
@@ -316,10 +318,10 @@ const resetPassword = async (req, res) => {
 };
 const updateInfoUser = async (req, res) => {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, tiktokUsername } = req.body;
 
     // 1️⃣ Validar que al menos un campo venga
-    if (!name && !phone && !email) {
+    if (!name && !phone && !email && !tiktokUsername) {
       return res.status(400).json({
         message: "Debes enviar al menos un campo para actualizar",
       });
@@ -337,6 +339,7 @@ const updateInfoUser = async (req, res) => {
         "phone",
         "roleId",
         "createdAt",
+        "tiktokUsername",
       ], // Mantenemos stripe_id por si acaso
       // 2. Incluimos el modelo Subscription
       include: [
@@ -363,6 +366,7 @@ const updateInfoUser = async (req, res) => {
     if (name) user.name = name;
     if (phone) user.phone = phone;
     if (email) user.email = email;
+    if (tiktokUsername) user.tiktokUsername = tiktokUsername;
 
     await user.save();
     const activeSubscription =
@@ -385,6 +389,7 @@ const updateInfoUser = async (req, res) => {
         profileImage: getS3Url(user.profileImage),
         member_since: user.createdAt,
         stripe_id: user.stripe_id,
+        tiktokUsername: user.tiktokUsername,
         // Puedes enviar los detalles de la suscripción activa si los necesitas en el front
         subscriptionDetails: isSubscribed
           ? {

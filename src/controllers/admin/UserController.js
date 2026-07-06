@@ -184,6 +184,7 @@ const runRaffleOneWinner = async (req, res) => {
           name: winnerUser.name,
           email: winnerUser.email,
           total_points: winnerUser.total_points,
+          tiktokUsername: winnerUser.tiktokUsername || null,
         },
         prize: {
           id: prize.id,

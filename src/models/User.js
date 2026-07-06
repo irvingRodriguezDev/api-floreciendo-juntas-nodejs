@@ -20,6 +20,11 @@ const User = sequelize.define(
       allowNull: true,
       unique: false,
     },
+    tiktokUsername: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: false,
+    },
     email: {
       type: DataTypes.STRING,
       allowNull: false,
