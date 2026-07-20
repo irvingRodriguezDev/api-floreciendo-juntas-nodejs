@@ -36,6 +36,8 @@ const BillingRoutes = require("./BillingRoutes");
 const StoreRoutes = require("./StoreRoutes");
 const FormationRoutes = require("./FormationRoutes");
 const ModuleFormationsRoutes = require("./ModuleFormationsRoutes");
+const SubscriptionRoutes = require("./SubscriptionRoutes");
+
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -71,5 +73,6 @@ router.use("/billing", BillingRoutes);
 router.use("/stores", StoreRoutes);
 router.use("/formations", FormationRoutes);
 router.use("/module-formations", ModuleFormationsRoutes);
+router.use("/subscriptions", SubscriptionRoutes);
 
 module.exports = router;

@@ -101,7 +101,7 @@ sequelize
   .sync({ alter: false })
   .then(async () => {
     console.log("✅ Base de datos sincronizada");
-    await seedData();
+    // await seedData();
     initCronJobs();
     httpServer.listen(PORT, "0.0.0.0", () => {
       console.log(`🌐 Servidor corriendo en puerto ${PORT}`);

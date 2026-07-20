@@ -96,7 +96,7 @@ const crearSesionSuscripcionMensual = async (req, res) => {
       },
       metadata: { userId: user.id.toString(), priceId },
       success_url: `${process.env.CLIENT_URL}/success-payment-subscription?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/cancel`,
+      cancel_url: `${process.env.CLIENT_URL}/pago-interrumpido`,
     });
 
     // ✅ NO destruyas el registro viejo aquí, solo actualiza o crea

@@ -31,7 +31,7 @@ const getEligibleUsers = async ({
         attributes: [], // No aplanamos atributos de suscripción para evitar filas duplicadas con raw: true
         where: {
           status: {
-            [Op.in]: ["active", "past_due"],
+            [Op.in]: ["active"],
           },
         },
       },

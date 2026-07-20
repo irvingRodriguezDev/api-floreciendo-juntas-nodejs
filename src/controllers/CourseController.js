@@ -250,7 +250,7 @@ const getCoursesPaginate = async (req, res) => {
         },
         {
           model: CourseVideo,
-          as: "video", // Asegúrate de usar el mismo alias definido en la asociación
+          as: "videos", // Asegúrate de usar el mismo alias definido en la asociación
           where: { is_active: true },
           required: true, // el curso puede no tener video aún
         },
