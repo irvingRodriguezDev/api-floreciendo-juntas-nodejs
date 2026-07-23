@@ -171,6 +171,7 @@ const createPost = async (req, res) => {
     // Esto ya no le importa al usuario esperar, pero debe ejecutarse
     (async () => {
       try {
+        // 1. Buscar usuarios objetivo (rol 4, suscritos, excluyendo al creador)
         const usersWithTokens = await User.findAll({
           where: { roleId: 4, isSubscribed: true, id: { [Op.ne]: userId } },
           attributes: ["id"],
@@ -178,9 +179,10 @@ const createPost = async (req, res) => {
             {
               model: NotificationToken,
               as: "NotificationTokens",
-              where: { isActive: true, device: { [Op.ne]: "safari" } },
+              // 💡 Quitamos la restricción de 'safari' para garantizar que llegue a iOS PWA
+              where: { isActive: true },
               attributes: ["token"],
-              required: false,
+              required: false, // Permite traer usuarios para notif en BD/Socket aunque no tengan Push Token
             },
           ],
         });
@@ -190,7 +192,7 @@ const createPost = async (req, res) => {
           const notifBody = `${req.user.name} publicó un nuevo post`;
           const notifUrl = `/comunidad/${post.id}`;
 
-          // 1. Crear las notificaciones en la DB
+          // 1. Crear las notificaciones en la DB en lote
           const createdNotifications = await Notifications.bulkCreate(
             usersWithTokens.map((u) => ({
               userId: u.id,
@@ -202,21 +204,26 @@ const createPost = async (req, res) => {
               url: notifUrl,
               data: { postId: post.id },
             })),
-            { returning: true }, // 💡 Importante para obtener los objetos creados
+            { returning: true },
           );
 
-          // 🔥 2. EMITIR POR SOCKET A CADA USUARIO CONECTADO
-          // Como es una comunidad, notificamos a todos los usuarios de la lista
+          // 2. Emitir por Socket en tiempo real a los usuarios conectados
           createdNotifications.forEach((notif) => {
             emitNotification(notif.userId, notif);
           });
 
-          // 3. Recolectar tokens para Push (Firebase)
+          // 3. Recolectar tokens activos para Push (Firebase FCM)
           const allTokens = usersWithTokens.flatMap((u) =>
             (u.NotificationTokens || []).map((t) => t.token),
           );
 
+          // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
+          console.log(
+            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
+          );
+
           if (allTokens.length > 0) {
+            // Enviar en lotes de 500 (límite de FCM Multicast)
             for (let i = 0; i < allTokens.length; i += 500) {
               const batch = allTokens.slice(i, i + 500);
               await sendPushNotificationMulticast({
@@ -224,7 +231,9 @@ const createPost = async (req, res) => {
                 title: notifTitle,
                 body: notifBody,
                 data: { type: "post", postId: String(post.id), url: notifUrl },
-              }).catch(() => {});
+              }).catch((err) => {
+                console.error("❌ Error enviando lote Push:", err);
+              });
             }
           }
         }
@@ -441,43 +450,53 @@ const toggleLike = async (req, res) => {
     getIO().emit("postLikeToggled", { postId: Number(postId), userId, liked });
 
     // 5. Notificaciones (Solo si es Like y no es mi propio post)
+
     if (liked && post.userId !== userId) {
       (async () => {
         try {
-          // Guardar en historial (DB)
+          const notifTitle = "Nueva reacción ❤️";
+          const notifBody = `${userName} reaccionó a tu publicación`;
+          const notifUrl = `/comunidad/${postId}`;
+
+          // 1. Guardar en historial (DB)
           const notification = await Notifications.create({
             userId: post.userId,
             actorId: userId,
             type: "like",
-            title: "Nueva reacción ❤️",
-            body: `${userName} reaccionó a tu publicación`,
-            url: `/comunidad/${postId}`,
+            title: notifTitle,
+            body: notifBody,
+            url: notifUrl,
             data: { postId },
           });
+
+          // 2. Emitir por Socket en tiempo real
           emitNotification(post.userId, notification);
-          // Buscar tokens del dueño del post
+
+          // 3. Buscar tokens activos del dueño del post
           const tokenRows = await NotificationToken.findAll({
             where: {
               userId: post.userId,
               isActive: true,
-              device: { [Op.ne]: "safari" },
             },
             attributes: ["token"],
           });
 
           if (tokenRows.length > 0) {
             const tokens = tokenRows.map((t) => t.token);
-            // ✅ USAMOS EL NUEVO MULTICAST (Incluso si es un solo usuario, es más seguro)
+
+            // 4. Enviar Push Nativo vía FCM Multicast
             await sendPushNotificationMulticast({
               tokens,
-              title: "Han reaccionado a tu publicación",
-              body: `${userName} reaccionó a tu publicación`,
+              title: notifTitle,
+              body: notifBody,
               data: {
                 type: "like",
                 postId: String(postId),
-                url: `/comunidad/${postId}`,
+                url: notifUrl,
               },
-            });
+            }).catch((pushErr) =>
+              console.error("❌ Error en Push Like:", pushErr),
+            );
           }
         } catch (err) {
           console.error("❌ Error notificación like:", err);
@@ -609,6 +628,7 @@ const addComment = async (req, res) => {
           const notifBody = `${user.name} comentó tu publicación`;
           const notifUrl = `/comunidad/${postId}`;
 
+          // 1. Guardar en BD para el centro de notificaciones
           const notification = await Notifications.create({
             userId: post.userId,
             actorId: userId,
@@ -620,26 +640,33 @@ const addComment = async (req, res) => {
             data: { postId, commentId: fullComment.id },
           });
 
+          // 2. Emitir por Socket en tiempo real
           emitNotification(post.userId, notification);
 
+          // 3. Buscar tokens activos de FCM
           const tokens = await NotificationToken.findAll({
             where: {
               userId: post.userId,
               isActive: true,
-              device: { [Op.ne]: "safari" },
             },
             attributes: ["token"],
           });
 
           if (tokens.length > 0) {
-            // Usamos Multicast en lugar de Promise.all(sendPushNotification)
-            // Es mucho más eficiente para Firebase
+            // 4. Enviar notificación Push nativa vía FCM Multicast
             await sendPushNotificationMulticast({
               tokens: tokens.map((t) => t.token),
-              title: "Han comentado tu publicación 💬",
+              title: notifTitle, // 👈 Usamos la misma variable para consistencia
               body: notifBody,
-              data: { type: "comment", postId: String(postId), url: notifUrl },
-            }).catch((err) => console.error("⚠️ Multicast error:", err));
+              data: {
+                type: "comment",
+                postId: String(postId),
+                commentId: String(fullComment.id), // 💡 Útil si quieres hacer scroll al comentario en el cliente
+                url: notifUrl,
+              },
+            }).catch((err) =>
+              console.error("⚠️ Multicast error en comentario:", err),
+            );
           }
         }
       } catch (err) {

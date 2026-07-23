@@ -433,9 +433,11 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
     // 5. Notificaciones push en segundo plano (fire & forget)
     (async () => {
       try {
-        console.log(`📣 Enviando notificaciones → live:${live.id}`);
+        console.log(
+          `📣 Procesando notificaciones background → live:${live.id}`,
+        );
 
-        // Traemos usuarios y tokens en UNA SOLA consulta (JOIN)
+        // 1. Traemos usuarios suscritos (Rol 4) y sus tokens en UNA SOLA consulta
         const usersWithTokens = await User.findAll({
           where: { roleId: 4, isSubscribed: true },
           attributes: ["id"],
@@ -443,9 +445,9 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
             {
               model: NotificationToken,
               as: "NotificationTokens",
-              where: { isActive: true, device: { [Op.ne]: "safari" } },
+              where: { isActive: true },
               attributes: ["token"],
-              required: false,
+              required: false, // Permite traer usuarios para BD/Socket aunque no tengan Push Token
             },
           ],
         });
@@ -458,7 +460,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           : "Un live acaba de comenzar";
         const url = `/detalle-live/${live.id}`;
 
-        // A. Historial en DB (bulk insert — 1 sola query)
+        // 2. Historial en BD (bulk insert)
         const notificationsData = usersWithTokens.map((u) => ({
           userId: u.id,
           actorId: live.userId || null,
@@ -469,11 +471,24 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           url,
           data: { liveId: live.id, streamId },
         }));
-        await Notifications.bulkCreate(notificationsData);
 
-        // B. Recolectar tokens y enviar multicast a Firebase (bloques de 500)
+        const createdNotifications = await Notifications.bulkCreate(
+          notificationsData,
+          { returning: true }, // 💡 Nos devuelve los registros creados con sus IDs de BD
+        );
+
+        // 3. Emitir por Socket en tiempo real a los usuarios conectados
+        createdNotifications.forEach((notif) => {
+          emitNotification(notif.userId, notif);
+        });
+
+        // 4. Recolectar tokens y enviar multicast a Firebase (lotes de 500)
         const allTokens = usersWithTokens.flatMap((u) =>
           (u.NotificationTokens || []).map((t) => t.token),
+        );
+
+        console.log(
+          `🚀 Enviando Push masivo de Live a ${allTokens.length} dispositivo(s)...`,
         );
 
         if (allTokens.length > 0) {
@@ -488,9 +503,9 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           }
         }
 
-        console.log(`✅ Notificaciones enviadas → live:${live.id}`);
+        console.log(`✅ Notificaciones enviadas con éxito → live:${live.id}`);
       } catch (err) {
-        console.error("⚠️  Error notificaciones live background:", err);
+        console.error("⚠️ Error notificaciones live background:", err);
       }
     })();
 

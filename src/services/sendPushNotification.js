@@ -73,8 +73,8 @@ const sendPushNotificationMulticast = async ({
       notification: {
         title: String(title || ""),
         body: String(body || ""),
-        icon: "/logo192.png", // Icono de tu PWA
-        badge: "/badge.png",
+        icon: `${process.env.CLIENT_URL}/foto.png`, // Icono de tu PWA
+        badge: `${process.env.CLIENT_URL}/foto.png`,
       },
       fcmOptions: {
         link: url,

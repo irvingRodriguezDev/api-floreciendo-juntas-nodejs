@@ -126,15 +126,19 @@ const updateVideo = async (req, res) => {
     if (!wasReady && isReadyNow) {
       (async () => {
         try {
-          // Consulta optimizada con JOIN
+          console.log(
+            `📣 Notificando nuevo video listo → curso:${video.courseId}`,
+          );
+
+          // 1. Consulta optimizada de usuarios y tokens
           const usersWithTokens = await User.findAll({
             where: { roleId: 4, isSubscribed: true },
             attributes: ["id"],
             include: [
               {
                 model: NotificationToken,
-                as: "notificationTokens",
-                where: { isActive: true, device: { [Op.ne]: "safari" } },
+                as: "NotificationTokens", // 👈 Asegúrate de usar el mismo alias de tu modelo
+                where: { isActive: true }, // 👈 Removido [Op.ne]: "safari" para permitir iOS PWA
                 attributes: ["token"],
                 required: false,
               },
@@ -144,10 +148,10 @@ const updateVideo = async (req, res) => {
           if (!usersWithTokens.length) return;
 
           const title = "Nuevo curso disponible 🎬";
-          const body = "¡Un nuevo video ha sido publicado!";
+          const body = "¡Un nuevo curso ha sido publicado en la plataforma!";
           const url = `/detalle-curso/${video.courseId}`;
 
-          // A. Historial masivo (Bulk Create)
+          // 2. Historial masivo en BD (Bulk Create)
           const notificationEntries = usersWithTokens.map((u) => ({
             userId: u.id,
             actorId: null,
@@ -158,11 +162,26 @@ const updateVideo = async (req, res) => {
             url,
             data: { videoId: video.id, courseId: video.courseId },
           }));
-          await Notifications.bulkCreate(notificationEntries);
 
-          // B. Enviar Push mediante Multicast (Bloques de 500)
+          const createdNotifications = await Notifications.bulkCreate(
+            notificationEntries,
+            { returning: true }, // 💡 Devuelve las instancias creadas para los WebSockets
+          );
+
+          // 3. Emitir por Socket en tiempo real
+          createdNotifications.forEach((notif) => {
+            emitNotification(notif.userId, notif);
+          });
+
+          // 4. Recolectar tokens y enviar Push Multicast (bloques de 500)
           const allTokens = usersWithTokens.flatMap((u) =>
-            (u.notificationTokens || []).map((t) => t.token),
+            (u.NotificationTokens || u.notificationTokens || []).map(
+              (t) => t.token,
+            ),
+          );
+
+          console.log(
+            `🚀 Enviando Push de nuevo video a ${allTokens.length} dispositivo(s)...`,
           );
 
           if (allTokens.length > 0) {
@@ -178,9 +197,13 @@ const updateVideo = async (req, res) => {
                   courseId: String(video.courseId),
                   url,
                 },
-              }).catch((e) => console.error("Error batch push video:", e));
+              }).catch((e) => console.error("❌ Error batch push video:", e));
             }
           }
+
+          console.log(
+            `✅ Notificaciones de video enviadas con éxito → video:${video.id}`,
+          );
         } catch (err) {
           console.error("⚠️ Error notificaciones video background:", err);
         }
