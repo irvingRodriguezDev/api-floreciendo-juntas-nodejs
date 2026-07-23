@@ -2,20 +2,39 @@ const admin = require("../config/firebase");
 const { NotificationToken } = require("../models");
 
 /**
- * ENVÍO INDIVIDUAL (Mantener para compatibilidad si se usa en otros lados)
+ * ENVÍO INDIVIDUAL
  */
 const sendPushNotification = async ({ token, title, body, data = {} }) => {
   if (!token) return { success: false };
   try {
+    const url = data.url || "/";
     const message = {
       token,
+      // 1. Notificación estándar para Android/APNs nativo
+      notification: {
+        title: String(title || ""),
+        body: String(body || ""),
+      },
+      // 2. Data opcional para manejo personalizado en frontend
       data: {
         title: String(title || ""),
         body: String(body || ""),
-        url: String(data.url || "/"),
+        url: String(url),
       },
-      webpush: { fcmOptions: { link: data.url || "/" } },
+      // 3. Estructura WebPush OBLIGATORIA para iOS Safari PWA
+      webpush: {
+        notification: {
+          title: String(title || ""),
+          body: String(body || ""),
+          icon: "/logo192.png", // Icono de tu PWA (ajusta la ruta)
+          badge: "/badge.png", // Icono pequeñito para la barra (opcional)
+        },
+        fcmOptions: {
+          link: url,
+        },
+      },
     };
+
     await admin.messaging().send(message);
     return { success: true };
   } catch (error) {
@@ -26,7 +45,6 @@ const sendPushNotification = async ({ token, title, body, data = {} }) => {
 
 /**
  * ENVÍO MASIVO (MULTICAST) 🚀
- * Ideal para notificar a cientos de personas sin saturar la red.
  */
 const sendPushNotificationMulticast = async ({
   tokens,
@@ -36,16 +54,30 @@ const sendPushNotificationMulticast = async ({
 }) => {
   if (!tokens || tokens.length === 0) return { success: true };
 
+  const url = data.url || "/";
   const message = {
     tokens, // Array de tokens
+    // 1. Notificación estándar
+    notification: {
+      title: String(title || ""),
+      body: String(body || ""),
+    },
+    // 2. Payload de datos
     data: {
       title: String(title || ""),
       body: String(body || ""),
-      url: String(data.url || "/"),
+      url: String(url),
     },
+    // 3. Estructura WebPush OBLIGATORIA para iOS Safari PWA
     webpush: {
+      notification: {
+        title: String(title || ""),
+        body: String(body || ""),
+        icon: "/logo192.png", // Icono de tu PWA
+        badge: "/badge.png",
+      },
       fcmOptions: {
-        link: data.url || "/",
+        link: url,
       },
     },
   };
@@ -53,7 +85,6 @@ const sendPushNotificationMulticast = async ({
   try {
     const response = await admin.messaging().sendEachForMulticast(message);
 
-    // Si hubo fallos, procesamos cuáles tokens ya no sirven
     if (response.failureCount > 0) {
       const invalidTokens = [];
       response.responses.forEach((resp, idx) => {
@@ -69,7 +100,6 @@ const sendPushNotificationMulticast = async ({
       });
 
       if (invalidTokens.length > 0) {
-        // Desactivación masiva para no saturar la BD con 900 updates individuales
         await NotificationToken.update(
           { isActive: false },
           { where: { token: invalidTokens } },

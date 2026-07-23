@@ -49,7 +49,7 @@ const toggleReaction = async (req, res) => {
       // Crear reacción
       await CommunityReaction.create(
         { userId, postId, type },
-        { transaction: t }
+        { transaction: t },
       );
     }
 
@@ -58,9 +58,9 @@ const toggleReaction = async (req, res) => {
       userId,
       10,
       "reaction",
-      `post:${postId}`, // 🔒 CLAVE
+      `${postId}`, // 🔒 CLAVE
       "Reaccionó a un post",
-      t
+      t,
     );
 
     await t.commit();

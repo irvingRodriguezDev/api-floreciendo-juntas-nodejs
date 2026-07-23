@@ -216,7 +216,14 @@ const obtainWinnersOfMonth = async (req, res) => {
         {
           model: User,
           as: "user",
-          attributes: ["id", "name", "email", "phone"],
+          attributes: [
+            "id",
+            "name",
+            "email",
+            "phone",
+            "profileImage",
+            "tiktokUsername",
+          ],
         },
         {
           model: MonthlyPrize,
@@ -230,7 +237,23 @@ const obtainWinnersOfMonth = async (req, res) => {
     return res.status(200).json({
       month: month,
       totalWinners: winners.length,
-      winners,
+      winners: winners.map((winner) => ({
+        position: winner.position,
+        user: {
+          id: winner.user.id,
+          name: winner.user.name,
+          email: winner.user.email,
+          phone: winner.user.phone,
+          profileImageUrl: winner.user.profileImage
+            ? getS3Url(winner.user.profileImage)
+            : null,
+          tiktokUsername: winner.user.tiktokUsername || null,
+        },
+        prize: {
+          id: winner.prize.id,
+          name: winner.prize.prize_name,
+        },
+      })),
     });
   } catch (error) {
     console.error("obtainWinnersOfMonth error:", error);

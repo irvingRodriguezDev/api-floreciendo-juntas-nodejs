@@ -7,7 +7,7 @@ router.get("/users", authMiddleware, usrCtrl.getAllUsers);
 router.get("/user-eligible", authMiddleware, usrCtrl.eligibleUsers);
 router.get(
   "/user-winners-current-month",
-  authMiddleware,
+  // authMiddleware,
   usrCtrl.obtainWinnersOfMonth,
 );
 router.get("/run-raffle", authMiddleware, usrCtrl.runRaffleOneWinner);
