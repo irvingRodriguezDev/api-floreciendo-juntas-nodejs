@@ -2,12 +2,12 @@
 const { CourseProgress } = require("../models");
 const { addPoints } = require("../utils/addPoints");
 const sequelize = require("../config/db");
+
 const getProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
 
-    return;
     if (isNaN(userId)) {
       return res
         .status(400)
@@ -21,12 +21,14 @@ const getProgress = async (req, res) => {
       return res.json({
         certificate_enabled: false,
         lastWatchedSeconds: 0,
+        percent: 0, // <-- Incluimos el porcentaje
       });
     }
 
     res.json({
       certificate_enabled: userProgress.certificateEnabled,
       lastWatchedSeconds: userProgress.lastWatchedSeconds || 0,
+      percent: userProgress.percent || 0, // <-- Incluimos el porcentaje guardado
     });
   } catch (error) {
     console.error("getProgress error:", error);
@@ -34,11 +36,12 @@ const getProgress = async (req, res) => {
   }
 };
 
+
 const updateProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
-    const { secondsWatched = 0, certificate_enabled = false } = req.body;
+    const { secondsWatched = 0, percent = 0, certificate_enabled = false } = req.body;
 
     // 1. Declaramos una variable para guardar el resultado
     let result;
@@ -56,7 +59,7 @@ const updateProgress = async (req, res) => {
             userId,
             courseId,
             lastWatchedSeconds: secondsWatched,
-            percent: certificate_enabled ? 100 : 0,
+            percent: certificate_enabled ? 100 : percent,
             certificateEnabled: certificate_enabled,
             completedAt: certificate_enabled ? new Date() : null,
           },
@@ -66,12 +69,12 @@ const updateProgress = async (req, res) => {
         if (certificate_enabled) {
           await addPoints(
             userId,
-            10,
-            "course_completed",
-            courseId,
+            10, 
+            "course_completed", 
+            courseId, 
             "Completó el curso",
-            t,
-          );
+             t,
+            );
         }
         result = userProgress;
         return; // Terminamos el callback, permitiendo el COMMIT
@@ -82,21 +85,19 @@ const updateProgress = async (req, res) => {
         return;
       }
 
+      // 🔥 BLINDAJE: Nos aseguramos de que el porcentaje y segundos NUNCA retrocedan
+      userProgress.lastWatchedSeconds = Math.max(userProgress.lastWatchedSeconds || 0, secondsWatched);
+      userProgress.percent = certificate_enabled ? 100 : Math.max(userProgress.percent || 0, percent);
+
       if (certificate_enabled) {
-        userProgress.lastWatchedSeconds = secondsWatched;
-        userProgress.percent = 100;
         userProgress.certificateEnabled = true;
         userProgress.completedAt = new Date();
+      }
 
-        await userProgress.save({ transaction: t });
-        await addPoints(
-          userId,
-          10,
-          "course_completed",
-          courseId,
-          "Completó el curso",
-          t,
-        );
+      await userProgress.save({ transaction: t });
+
+      if (certificate_enabled) {
+        await addPoints(userId, 10, "course_completed", courseId, "Completó el curso", t);
       }
 
       result = userProgress;
