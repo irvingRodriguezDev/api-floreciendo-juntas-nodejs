@@ -56,25 +56,59 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
   try {
     switch (event.type) {
       /* ══════════════════════════════════════════════════
-       * 0. ¡NUEVO! CUALQUIER CHECKOUT EXPIRADO / ABANDONADO
-       *    Si la sesión de Stripe expira y estaba pendiente,
-       *    la borramos físicamente para no generar basura.
+       * 0. ACTUALIZACIÓN DE CLIENTE (¡NUEVO!)
+       *    Gatilla el cobro de la factura abierta en cuanto
+       *    el usuario registra/actualiza su tarjeta.
+       * ══════════════════════════════════════════════════ */
+      case "customer.updated": {
+        const defaultPaymentMethod =
+          data.invoice_settings?.default_payment_method;
+
+        if (defaultPaymentMethod) {
+          try {
+            // Buscamos si el cliente tiene alguna factura 'open' (vencida)
+            const openInvoices = await stripe.invoices.list({
+              customer: data.id,
+              status: "open",
+              limit: 1,
+            });
+
+            if (openInvoices.data.length > 0) {
+              const invoiceToPay = openInvoices.data[0];
+              // Intentamos cobrar la factura abierta inmediatamente
+              await stripe.invoices.pay(invoiceToPay.id, {
+                payment_method: defaultPaymentMethod,
+              });
+              console.log(
+                `💳 Factura ${invoiceToPay.id} cobrada automáticamente tras actualizar tarjeta del cliente ${data.id}`,
+              );
+            }
+          } catch (error) {
+            console.error(
+              `⚠️ Intentó cobrar factura abierta pero falló: ${error.message}`,
+            );
+          }
+        }
+        break;
+      }
+
+      /* ══════════════════════════════════════════════════
+       * 0.1 CHECKOUT EXPIRADO / ABANDONADO
        * ══════════════════════════════════════════════════ */
       case "checkout.session.expired": {
         if (data.mode !== "subscription") break;
 
-        // Buscamos si existe un registro pendiente para ese usuario
         const pendingSub = await Subscription.findOne({
           where: {
-            userId: data.metadata.userId,
+            userId: data.metadata?.userId,
             status: "pending",
           },
         });
 
         if (pendingSub) {
-          await pendingSub.destroy(); // 🗑️ Borrado físico
+          await pendingSub.destroy();
           console.log(
-            `🗑️ Registro 'pending' eliminado por abandono de Checkout. Usuario: ${data.metadata.userId}`,
+            `🗑️ Registro 'pending' eliminado por abandono de Checkout. Usuario: ${data.metadata?.userId}`,
           );
         }
         break;
@@ -94,12 +128,12 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
           await existingBySubId.update({
             stripe_customer_id: data.customer,
             status: "active",
-            price_id: data.metadata.priceId,
+            price_id: data.metadata?.priceId,
           });
         } else {
           const existingByUser = await Subscription.findOne({
             where: {
-              userId: data.metadata.userId,
+              userId: data.metadata?.userId,
               status: "pending",
             },
           });
@@ -109,24 +143,26 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
               stripe_subscription_id: data.subscription,
               stripe_customer_id: data.customer,
               status: "active",
-              price_id: data.metadata.priceId,
+              price_id: data.metadata?.priceId,
             });
           } else {
             await Subscription.create({
-              userId: data.metadata.userId,
+              userId: data.metadata?.userId,
               stripe_subscription_id: data.subscription,
               stripe_customer_id: data.customer,
               status: "active",
-              price_id: data.metadata.priceId,
+              price_id: data.metadata?.priceId,
               subscription_type: "RECURRING",
             });
           }
         }
 
-        await User.update(
-          { isSubscribed: true },
-          { where: { id: data.metadata.userId } },
-        );
+        if (data.metadata?.userId) {
+          await User.update(
+            { isSubscribed: true },
+            { where: { id: data.metadata.userId } },
+          );
+        }
         break;
       }
 
@@ -164,7 +200,7 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       }
 
       /* ══════════════════════════════════════════════════
-       * 2.5 CREACIÓN DE LA SUSCRIPCIÓN (En Stripe empieza incompleta)
+       * 2.5 CREACIÓN DE LA SUSCRIPCIÓN
        * ══════════════════════════════════════════════════ */
       case "customer.subscription.created": {
         const user = await User.findOne({
@@ -181,7 +217,7 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
             userId: user.id,
             stripe_subscription_id: data.id,
             stripe_customer_id: data.customer,
-            status: data.status, // Guardará 'incomplete'
+            status: data.status,
             price_id: data.items?.data[0]?.price?.id,
             subscription_type: "RECURRING",
             next_renewal: stripePeriodEnd
@@ -212,28 +248,22 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
       }
 
       /* ══════════════════════════════════════════════════
-       * 4. SUSCRIPCIÓN ACTUALIZADA → ¡OPTIMIZADO PARA LIMPIEZA!
+       * 4. SUSCRIPCIÓN ACTUALIZADA
        * ══════════════════════════════════════════════════ */
       case "customer.subscription.updated": {
         const status = data.status;
 
-        // 🚨 SI STRIPE DICE QUE EXPIRÓ SIN COMPLETARSE (Basura): ¡LA BORRAMOS!
         if (status === "incomplete_expired") {
           const subBasura = await Subscription.findOne({
             where: { stripe_subscription_id: data.id },
           });
           if (subBasura) {
-            await subBasura.destroy(); // 🗑️ Eliminación física fulminante
+            await subBasura.destroy();
             console.log(
               `🗑️ Eliminada suscripción expirada de la BD: ${data.id}`,
             );
           }
-
-          await User.update(
-            { isSubscribed: false },
-            { where: { stripe_id: data.customer } },
-          );
-          break; // Terminamos el caso aquí para que no intente hacer el upsert de abajo
+          break;
         }
 
         const user = await User.findOne({
@@ -273,24 +303,32 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         }
 
         const statusConAcceso = ["active", "trialing", "past_due"];
-        const statusSinAcceso = ["canceled", "unpaid"];
 
         if (statusConAcceso.includes(status)) {
           await User.update(
             { isSubscribed: true },
             { where: { stripe_id: data.customer } },
           );
-        } else if (statusSinAcceso.includes(status)) {
-          await User.update(
-            { isSubscribed: false },
-            { where: { stripe_id: data.customer } },
-          );
+        } else {
+          // Validamos si le queda alguna OTRA suscripción activa antes de quitarle el isSubscribed
+          const otherActiveSub = await Subscription.findOne({
+            where: {
+              userId: user.id,
+              status: ["active", "past_due"],
+            },
+          });
+          if (!otherActiveSub) {
+            await User.update(
+              { isSubscribed: false },
+              { where: { id: user.id } },
+            );
+          }
         }
         break;
       }
 
       /* ══════════════════════════════════════════════════
-       * 5. SUSCRIPCIÓN CANCELADA DEFINITIVAMENTE O INCOMPLETA QUE EXPIRÓ
+       * 5. SUSCRIPCIÓN CANCELADA
        * ══════════════════════════════════════════════════ */
       case "customer.subscription.deleted": {
         const sub = await Subscription.findOne({
@@ -298,17 +336,15 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
         });
 
         if (sub) {
-          // 🚨 SI LA SUSCRIPCIÓN NUNCA SE PAGÓ (estaba incomplete) Y SE ELIMINA: ¡ES BASURA!
           if (
             sub.status === "incomplete" ||
             data.status === "incomplete_expired"
           ) {
-            await sub.destroy(); // 🗑️ Borrado físico
+            await sub.destroy();
             console.log(
               `🗑️ Eliminada suscripción muerta desde subscription.deleted: ${data.id}`,
             );
           } else {
-            // Si era un cliente activo que simplemente canceló su servicio, sí lo marcamos como cancelado
             await sub.update({
               status: "canceled",
               ended_at: new Date(),
@@ -316,12 +352,22 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
               next_renewal: null,
             });
           }
-        }
 
-        await User.update(
-          { isSubscribed: false },
-          { where: { stripe_id: data.customer } },
-        );
+          // Verificamos si realmente se quedó sin ninguna suscripción activa
+          const activeSubLeft = await Subscription.findOne({
+            where: {
+              userId: sub.userId,
+              status: ["active", "past_due"],
+            },
+          });
+
+          if (!activeSubLeft) {
+            await User.update(
+              { isSubscribed: false },
+              { where: { id: sub.userId } },
+            );
+          }
+        }
         break;
       }
     }
@@ -330,7 +376,6 @@ const handleSubscriptionStripeWebhook = async (req, res) => {
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error(`❌ Error procesando webhook ${event.type}:`, error);
-    // ✅ Retornamos 500 para que Stripe reintente el webhook
     return res.status(500).send("Internal Server Error");
   }
 };

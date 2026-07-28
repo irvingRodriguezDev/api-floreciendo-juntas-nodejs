@@ -7,7 +7,13 @@ const {
   getStreamViewers,
 } = require("../services/awsIvsService");
 const { Op } = require("sequelize");
-const { Live, User, Notifications, NotificationToken } = require("../models");
+const {
+  Live,
+  User,
+  Notifications,
+  NotificationToken,
+  LiveComment,
+} = require("../models");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const moment = require("moment-timezone");
@@ -631,6 +637,45 @@ const getLiveViewers = async (req, res) => {
   }
 };
 
+const createCommentLive = async (req, res) => {
+  try {
+    const { liveId } = req.params;
+    const { message } = req.body;
+    const userName = req.user.name || "Alumna"; // Nombre del usuario logueado desde el JWT
+
+    const newComment = await LiveComment.create({
+      live_id: liveId,
+      user_name: userName,
+      message,
+    });
+
+    return res.status(201).json({ success: true, comment: newComment });
+  } catch (error) {
+    console.error("❌ Error guardando comentario:", error);
+    return res.status(500).json({ error: "Error al guardar el comentario" });
+  }
+};
+
+const getCommentsLive = async (req, res) => {
+  try {
+    const { liveId } = req.params;
+
+    const comments = await LiveComment.findAll({
+      where: { live_id: liveId },
+      order: [["createdAt", "ASC"]],
+      limit: 50, // Límite de seguridad
+    });
+
+    return res.status(200).json(comments);
+  } catch (error) {
+    console.error("❌ Error en getCommentLive:", error);
+    return res.status(500).json({
+      message: "Ocurrió un error al obtener los mensajes del live",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createLive,
   getAllLives,
@@ -642,4 +687,6 @@ module.exports = {
   deleteLive,
   handleIvsWebhook,
   getLiveViewers,
+  getCommentsLive,
+  createCommentLive,
 };

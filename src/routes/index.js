@@ -37,7 +37,7 @@ const StoreRoutes = require("./StoreRoutes");
 const FormationRoutes = require("./FormationRoutes");
 const ModuleFormationsRoutes = require("./ModuleFormationsRoutes");
 const SubscriptionRoutes = require("./SubscriptionRoutes");
-
+const { getLiveChatToken } = require("../controllers/LiveChatController");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -63,6 +63,7 @@ router.use("/posts", PostRoutes);
 router.get("/generate-token-ivs", getToken);
 router.get("/test-config-ivs", testIvsConfig);
 router.post("/save-notification-token", authMiddleware, saveNotificationToken);
+router.post("/lives/chat-token", authMiddleware, getLiveChatToken);
 router.use("/notifications", NotificationsRoutes);
 router.use("/certifications", CertificationsRoutes);
 router.use("/module-certifications", ModuleCertificationRoutes);

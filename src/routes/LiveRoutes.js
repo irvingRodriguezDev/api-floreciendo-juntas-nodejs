@@ -8,6 +8,12 @@ router.get("/", liveController.getAllLives);
 router.get("/:id", liveController.getLiveById);
 router.get("/:id/viewers", liveController.getLiveViewers);
 router.get("/:id/status", liveController.getStreamStatus);
+router.get("/comments/:liveId", liveController.getCommentsLive);
+router.post(
+  "/create-comment/:liveId",
+  authMiddleware,
+  liveController.createCommentLive,
+);
 router.post(
   "/",
   upload.single("file"),

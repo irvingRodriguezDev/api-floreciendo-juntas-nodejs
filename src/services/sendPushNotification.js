@@ -1,4 +1,4 @@
-const admin = require("../config/firebase");
+const { messaging } = require("../config/firebase");
 const { NotificationToken } = require("../models");
 
 /**
@@ -35,7 +35,7 @@ const sendPushNotification = async ({ token, title, body, data = {} }) => {
       },
     };
 
-    await admin.messaging().send(message);
+    await messaging().send(message);
     return { success: true };
   } catch (error) {
     await handleFcmError(error, [token]);
@@ -83,7 +83,7 @@ const sendPushNotificationMulticast = async ({
   };
 
   try {
-    const response = await admin.messaging().sendEachForMulticast(message);
+    const response = await messaging().sendEachForMulticast(message);
 
     if (response.failureCount > 0) {
       const invalidTokens = [];

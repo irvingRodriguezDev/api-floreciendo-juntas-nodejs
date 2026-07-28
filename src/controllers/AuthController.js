@@ -123,36 +123,70 @@ const me = async (req, res) => {
           model: Subscription,
           as: "Subscriptions",
           required: false,
-          where: { userId: req.user.id },
+          // Ordenamos para que las más recientes y activas tengan prioridad
         },
+      ],
+      // Ordenamos las suscripciones asociadas por fecha de creación (de la más nueva a la más vieja)
+      order: [
+        [{ model: Subscription, as: "Subscriptions" }, "createdAt", "DESC"],
       ],
     });
 
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    const sub = user.Subscriptions?.[0] || null;
+    const subscriptions = user.Subscriptions || [];
 
-    // past_due sigue teniendo acceso (periodo de gracia)
-    const isSubscribed = sub && ["active", "past_due"].includes(sub.status);
+    // 1. Buscamos primero si tiene alguna suscripción VÁLIDA (active o past_due)
+    let activeSub = subscriptions.find((sub) =>
+      ["active", "past_due"].includes(sub.status),
+    );
+
+    // 2. Si no tiene activa/past_due, buscamos si tiene una 'canceled' que aún no vence (periodo pagado)
+    if (!activeSub) {
+      activeSub = subscriptions.find((sub) => {
+        if (sub.status === "canceled" && sub.end_date) {
+          const endDate = new Date(sub.end_date);
+          return endDate > new Date(); // Todavía le quedan días pagados
+        }
+        return false;
+      });
+    }
+
+    // 3. Si sigue sin encontrar, tomamos simplemente el registro más reciente (el primero del array ordenado)
+    const currentSub = activeSub || subscriptions[0] || null;
+
+    // Evaluamos si tiene acceso
+    let isSubscribed = false;
+
+    if (currentSub) {
+      if (["active", "past_due"].includes(currentSub.status)) {
+        isSubscribed = true;
+      } else if (currentSub.status === "canceled" && currentSub.end_date) {
+        // Acceso permitido si canceló pero su periodo sigue vigente
+        isSubscribed = new Date(currentSub.end_date) > new Date();
+      }
+    }
 
     res.status(200).json({
       user: {
         ...user.get({ plain: true }),
         isSubscribed,
         profileImage: getS3Url(user.profileImage),
-        subscriptionDetails: sub
+        subscriptionDetails: currentSub
           ? {
-              type: sub.subscription_type,
-              status: sub.status,
-              endDate: sub.end_date,
-              next_renewal: sub.next_renewal,
-              last_payment_at: sub.last_payment_at,
-              will_cancel_at: sub.will_cancel_at,
+              id: currentSub.id,
+              type: currentSub.subscription_type,
+              status: currentSub.status,
+              endDate: currentSub.end_date,
+              next_renewal: currentSub.next_renewal,
+              last_payment_at: currentSub.last_payment_at,
+              will_cancel_at: currentSub.will_cancel_at,
             }
           : null,
       },
     });
   } catch (error) {
+    console.error("Error en /me:", error);
     res.status(500).json({ msg: "Error en /me", error: error.message });
   }
 };

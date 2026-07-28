@@ -104,6 +104,7 @@ const Subscription = sequelize.define(
   },
   {
     tableName: "Subscriptions",
+    paranoid: true,
     // Aseguramos que solo haya una suscripción activa por usuario si lo deseas
     // Aunque a veces se permite tener varias. Por ahora, no lo forzamos.
   },

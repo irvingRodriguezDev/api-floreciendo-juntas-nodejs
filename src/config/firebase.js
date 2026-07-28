@@ -1,9 +1,17 @@
-const admin = require("firebase-admin");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getMessaging } = require("firebase-admin/messaging");
 
 const serviceAccount = require("../../floreciendo-juntas-web-firebase-adminsdk-fbsvc-2e7f11036a.json");
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+// 1. Inicializar la App de Firebase
+const app = initializeApp({
+  credential: cert(serviceAccount),
 });
 
-module.exports = admin;
+// 2. Obtener la instancia de Messaging (FCM)
+const messaging = getMessaging(app);
+
+module.exports = {
+  app,
+  messaging,
+};
