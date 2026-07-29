@@ -1,3 +1,4 @@
+// 1. Desestructura 'messaging' de tu archivo de configuración
 const { messaging } = require("../config/firebase");
 const { NotificationToken } = require("../models");
 
@@ -26,8 +27,8 @@ const sendPushNotification = async ({ token, title, body, data = {} }) => {
         notification: {
           title: String(title || ""),
           body: String(body || ""),
-          icon: "/logo192.png", // Icono de tu PWA (ajusta la ruta)
-          badge: "/badge.png", // Icono pequeñito para la barra (opcional)
+          icon: "/logo192.png", // Icono de tu PWA
+          badge: "/badge.png", // Icono para la barra
         },
         fcmOptions: {
           link: url,
@@ -35,7 +36,8 @@ const sendPushNotification = async ({ token, title, body, data = {} }) => {
       },
     };
 
-    await messaging().send(message);
+    // 💡 CAMBIO AQUÍ: Se usa directamente 'messaging.send', sin paréntesis
+    await messaging.send(message);
     return { success: true };
   } catch (error) {
     await handleFcmError(error, [token]);
@@ -73,7 +75,7 @@ const sendPushNotificationMulticast = async ({
       notification: {
         title: String(title || ""),
         body: String(body || ""),
-        icon: `${process.env.CLIENT_URL}/foto.png`, // Icono de tu PWA
+        icon: `${process.env.CLIENT_URL}/foto.png`,
         badge: `${process.env.CLIENT_URL}/foto.png`,
       },
       fcmOptions: {
@@ -83,13 +85,14 @@ const sendPushNotificationMulticast = async ({
   };
 
   try {
-    const response = await messaging().sendEachForMulticast(message);
+    // 💡 CAMBIO AQUÍ: Se usa directamente 'messaging.sendEachForMulticast'
+    const response = await messaging.sendEachForMulticast(message);
 
     if (response.failureCount > 0) {
       const invalidTokens = [];
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
-          const errorCode = resp.error.code;
+          const errorCode = resp.error?.code;
           if (
             errorCode === "messaging/registration-token-not-registered" ||
             errorCode === "messaging/invalid-registration-token"
