@@ -7,6 +7,7 @@ const {
   getStreamViewers,
 } = require("../services/awsIvsService");
 const { Op } = require("sequelize");
+const emitNotification = require("../helpers/emitNotification");
 const {
   Live,
   User,
@@ -439,11 +440,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
     // 5. Notificaciones push en segundo plano (fire & forget)
     (async () => {
       try {
-        console.log(
-          `📣 Procesando notificaciones background → live:${live.id}`,
-        );
-
-        // 1. Traemos usuarios suscritos (Rol 4) y sus tokens en UNA SOLA consulta
+        // 1. Buscar usuarios objetivo (rol 4, suscritos, excluyendo al creador)
         const usersWithTokens = await User.findAll({
           where: { roleId: 4, isSubscribed: true },
           attributes: ["id"],
@@ -453,65 +450,65 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
               as: "NotificationTokens",
               where: { isActive: true },
               attributes: ["token"],
-              required: false, // Permite traer usuarios para BD/Socket aunque no tengan Push Token
+              required: false, // Permite traer usuarios para notif en BD/Socket aunque no tengan Push Token
             },
           ],
         });
 
-        if (!usersWithTokens.length) return;
+        if (usersWithTokens.length > 0) {
+          const notifTitle = "🎥 Transmisión en Vivo 🔴";
+          const notifBody = live.title
+            ? `"${live.title}" está en vivo en este momento.`
+            : "Una nueva clase en vivo está transmitiéndose ahora.";
+          const notifUrl = `/detalle-live/${live.id}`;
 
-        const title = "¡El live ya comenzó! 🔴";
-        const body = live.title
-          ? `${live.title} ya está en vivo`
-          : "Un live acaba de comenzar";
-        const url = `/detalle-live/${live.id}`;
+          // 1. Crear las notificaciones en la DB en lote
+          const createdNotifications = await Notifications.bulkCreate(
+            usersWithTokens.map((u) => ({
+              userId: u.id,
+              actorId: null,
+              type: "live",
+              entityId: live.id,
+              title: notifTitle,
+              body: notifBody,
+              url: notifUrl,
+              data: { liveId: live.id },
+            })),
+            { returning: true },
+          );
 
-        // 2. Historial en BD (bulk insert)
-        const notificationsData = usersWithTokens.map((u) => ({
-          userId: u.id,
-          actorId: live.userId || null,
-          type: "live",
-          entityId: live.id,
-          title,
-          body,
-          url,
-          data: { liveId: live.id, streamId },
-        }));
+          // 2. Emitir por Socket en tiempo real a los usuarios conectados
+          createdNotifications.forEach((notif) => {
+            emitNotification(notif.userId, notif);
+          });
 
-        const createdNotifications = await Notifications.bulkCreate(
-          notificationsData,
-          { returning: true }, // 💡 Nos devuelve los registros creados con sus IDs de BD
-        );
+          // 3. Recolectar tokens activos para Push (Firebase FCM)
+          const allTokens = usersWithTokens.flatMap((u) =>
+            (u.NotificationTokens || []).map((t) => t.token),
+          );
 
-        // 3. Emitir por Socket en tiempo real a los usuarios conectados
-        createdNotifications.forEach((notif) => {
-          emitNotification(notif.userId, notif);
-        });
+          // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
+          console.log(
+            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
+          );
 
-        // 4. Recolectar tokens y enviar multicast a Firebase (lotes de 500)
-        const allTokens = usersWithTokens.flatMap((u) =>
-          (u.NotificationTokens || []).map((t) => t.token),
-        );
-
-        console.log(
-          `🚀 Enviando Push masivo de Live a ${allTokens.length} dispositivo(s)...`,
-        );
-
-        if (allTokens.length > 0) {
-          for (let i = 0; i < allTokens.length; i += 500) {
-            const batch = allTokens.slice(i, i + 500);
-            await sendPushNotificationMulticast({
-              tokens: batch,
-              title,
-              body,
-              data: { type: "live", liveId: String(live.id), url },
-            }).catch((e) => console.error("❌ Error batch push live:", e));
+          if (allTokens.length > 0) {
+            // Enviar en lotes de 500 (límite de FCM Multicast)
+            for (let i = 0; i < allTokens.length; i += 500) {
+              const batch = allTokens.slice(i, i + 500);
+              await sendPushNotificationMulticast({
+                tokens: batch,
+                title: notifTitle,
+                body: notifBody,
+                data: { type: "live", liveId: String(live.id), url: notifUrl },
+              }).catch((err) => {
+                console.error("❌ Error enviando lote Push:", err);
+              });
+            }
           }
         }
-
-        console.log(`✅ Notificaciones enviadas con éxito → live:${live.id}`);
       } catch (err) {
-        console.error("⚠️ Error notificaciones live background:", err);
+        console.error("❌ Error en Notificaciones live:", err);
       }
     })();
 
@@ -662,7 +659,7 @@ const getCommentsLive = async (req, res) => {
 
     const comments = await LiveComment.findAll({
       where: { live_id: liveId },
-      order: [["createdAt", "ASC"]],
+      order: [["createdAt", "desc"]],
       limit: 50, // Límite de seguridad
     });
 

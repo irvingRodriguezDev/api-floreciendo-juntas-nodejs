@@ -3,42 +3,48 @@ const NotificationToken = require("../models/NotificationToken");
 // Controlador de /save-notification-token
 const saveNotificationToken = async (req, res) => {
   const { token, device, browserId } = req.body;
-  const userId = req.user.id; // ID del usuario autenticado vía JWT/Sesión
+  const userId = req.user.id;
 
   try {
     if (!token) {
       return res.status(400).json({ error: "El token es requerido" });
     }
 
-    // 1. Desactivar este mismo token si estaba registrado previamente
-    //    (por ejemplo, si pertenecía a otro usuario que usó el mismo teléfono)
+    // 1. Si este mismo 'token' pertenecía a otro usuario en esta misma máquina,
+    // lo desvinculamos o desactivamos para no enviar notificaciones cruzadas.
     await NotificationToken.update({ isActive: false }, { where: { token } });
 
-    // 2. Si se envía browserId, desactivar tokens viejos del mismo usuario en este navegador
+    // 2. Si tenemos browserId, buscamos si ya existe el par (userId + browserId)
+    let existingTokenRecord = null;
     if (browserId) {
-      await NotificationToken.update(
-        { isActive: false },
-        { where: { userId, browserId } },
-      );
+      existingTokenRecord = await NotificationToken.findOne({
+        where: { userId, browserId },
+      });
     }
 
-    // 3. Crear o Reactivar el nuevo token para el usuario actual
-    const [notificationToken, created] = await NotificationToken.findOrCreate({
-      where: { token },
-      defaults: {
+    // 3. Si no se encontró por (userId + browserId), buscamos directamente por token
+    if (!existingTokenRecord) {
+      existingTokenRecord = await NotificationToken.findOne({
+        where: { token },
+      });
+    }
+
+    // 4. Si ya existe el registro (sea por browserId o por token), lo ACTUALIZAMOS
+    if (existingTokenRecord) {
+      await existingTokenRecord.update({
         userId,
+        token, // Actualiza el token si Firebase entregó uno nuevo
+        device: device || existingTokenRecord.device || "web",
+        browserId: browserId || existingTokenRecord.browserId,
+        isActive: true,
+      });
+    } else {
+      // 5. Si es un navegador/dispositivo totalmente nuevo, lo CREAMOS
+      await NotificationToken.create({
+        userId,
+        token,
         device: device || "web",
         browserId: browserId || null,
-        isActive: true,
-      },
-    });
-
-    // Si ya existía el registro del token, lo actualizamos y activamos para el usuario actual
-    if (!created) {
-      await notificationToken.update({
-        userId,
-        device: device || notificationToken.device,
-        browserId: browserId || notificationToken.browserId,
         isActive: true,
       });
     }

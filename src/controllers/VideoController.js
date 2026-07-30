@@ -10,8 +10,9 @@ const { Upload } = require("@aws-sdk/lib-storage");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const CourseVideo = require("../models/CourseVideo");
 const sequelize = require("../config/db");
-const { User, Notifications, NotificationToken } = require("../models");
+const { User, Notifications, NotificationToken, Course } = require("../models");
 const sendPushNotification = require("../services/sendPushNotification");
+const emitNotification = require("../helpers/emitNotification");
 const s3 = new S3Client({ region: "us-east-2" });
 const BUCKET_NAME = "floreciendo-videos-cursos";
 
@@ -104,6 +105,8 @@ const updateVideo = async (req, res) => {
     if (!videoId) return res.status(400).json({ message: "ID obligatorio" });
 
     const video = await CourseVideo.findByPk(videoId);
+    const course = await Course.findOne({ where: { id: video.courseId } });
+
     if (!video) return res.status(404).json({ message: "Video no encontrado" });
 
     if (!video.is_active) {
@@ -119,93 +122,90 @@ const updateVideo = async (req, res) => {
       status: status || "listo",
     });
 
-    // 2️⃣ Respuesta inmediata al Webhook (AWS o el que llame no debe esperar)
+    // 2️⃣ Respuesta inmediata al Webhook
     res.json({ message: "Video actualizado correctamente" });
 
     // 3️⃣ Procesamiento de notificaciones en Background 🚀
     if (!wasReady && isReadyNow) {
       (async () => {
         try {
-          console.log(
-            `📣 Notificando nuevo video listo → curso:${video.courseId}`,
-          );
-
-          // 1. Consulta optimizada de usuarios y tokens
+          // 1. Buscar usuarios objetivo (rol 4, suscritos, excluyendo al creador)
           const usersWithTokens = await User.findAll({
-            where: { roleId: 4, isSubscribed: true },
+            where: {
+              roleId: 4,
+              isSubscribed: true,
+            },
             attributes: ["id"],
             include: [
               {
                 model: NotificationToken,
-                as: "NotificationTokens", // 👈 Asegúrate de usar el mismo alias de tu modelo
-                where: { isActive: true }, // 👈 Removido [Op.ne]: "safari" para permitir iOS PWA
+                as: "NotificationTokens",
+                // 💡 Quitamos la restricción de 'safari' para garantizar que llegue a iOS PWA
+                where: { isActive: true },
                 attributes: ["token"],
-                required: false,
+                required: false, // Permite traer usuarios para notif en BD/Socket aunque no tengan Push Token
               },
             ],
           });
 
-          if (!usersWithTokens.length) return;
+          if (usersWithTokens.length > 0) {
+            const notifTitle = "🎬 ¡Nueva clase disponible!";
+            const notifBody = `Ya puedes ver el nuevo contenido de "${course.title}". ¡Entra ahora! `;
+            const notifUrl = `/detalle-curso/${video.courseId}`;
 
-          const title = "Nuevo curso disponible 🎬";
-          const body = "¡Un nuevo curso ha sido publicado en la plataforma!";
-          const url = `/detalle-curso/${video.courseId}`;
+            // 1. Crear las notificaciones en la DB en lote
+            const createdNotifications = await Notifications.bulkCreate(
+              usersWithTokens.map((u) => ({
+                userId: u.id,
+                actorId: null,
+                type: "course",
+                entityId: video.id,
+                title: notifTitle,
+                body: notifBody,
+                url: notifUrl,
+                data: { videoId: video.id, courseId: video.courseId },
+              })),
+              { returning: true },
+            );
 
-          // 2. Historial masivo en BD (Bulk Create)
-          const notificationEntries = usersWithTokens.map((u) => ({
-            userId: u.id,
-            actorId: null,
-            type: "course",
-            entityId: video.id,
-            title,
-            body,
-            url,
-            data: { videoId: video.id, courseId: video.courseId },
-          }));
+            // 2. Emitir por Socket en tiempo real a los usuarios conectados
+            createdNotifications.forEach((notif) => {
+              emitNotification(notif.userId, notif);
+            });
 
-          const createdNotifications = await Notifications.bulkCreate(
-            notificationEntries,
-            { returning: true }, // 💡 Devuelve las instancias creadas para los WebSockets
-          );
+            // 3. Recolectar tokens activos para Push (Firebase FCM)
+            const allTokens = usersWithTokens.flatMap((u) =>
+              (u.NotificationTokens || []).map((t) => t.token),
+            );
 
-          // 3. Emitir por Socket en tiempo real
-          createdNotifications.forEach((notif) => {
-            emitNotification(notif.userId, notif);
-          });
+            // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
+            console.log(
+              `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
+            );
 
-          // 4. Recolectar tokens y enviar Push Multicast (bloques de 500)
-          const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || u.notificationTokens || []).map(
-              (t) => t.token,
-            ),
-          );
-
-          console.log(
-            `🚀 Enviando Push de nuevo video a ${allTokens.length} dispositivo(s)...`,
-          );
-
-          if (allTokens.length > 0) {
-            for (let i = 0; i < allTokens.length; i += 500) {
-              const batch = allTokens.slice(i, i + 500);
-              await sendPushNotificationMulticast({
-                tokens: batch,
-                title,
-                body,
-                data: {
-                  type: "course",
-                  videoId: String(video.id),
-                  courseId: String(video.courseId),
-                  url,
-                },
-              }).catch((e) => console.error("❌ Error batch push video:", e));
+            if (allTokens.length > 0) {
+              // Enviar en lotes de 500 (límite de FCM Multicast)
+              for (let i = 0; i < allTokens.length; i += 500) {
+                const batch = allTokens.slice(i, i + 500);
+                await sendPushNotification
+                  .sendPushNotificationMulticast({
+                    tokens: batch,
+                    title: notifTitle,
+                    body: notifBody,
+                    data: {
+                      type: "course",
+                      postId: String(video.id),
+                      url: notifUrl,
+                    },
+                  })
+                  .catch((err) => {
+                    console.error("❌ Error enviando lote Push:", err);
+                  });
+              }
             }
           }
-
-          console.log(
-            `✅ Notificaciones de video enviadas con éxito → video:${video.id}`,
-          );
         } catch (err) {
-          console.error("⚠️ Error notificaciones video background:", err);
+          console.error("❌ Error en Notificaciones de video publicado:", err);
         }
       })();
     }

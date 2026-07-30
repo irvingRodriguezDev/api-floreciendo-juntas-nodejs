@@ -80,7 +80,7 @@ const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
         attributes: [],
         where: {
           status: {
-            [Op.in]: ["active", "past_due"],
+            [Op.in]: ["active"],
           },
         },
       },
@@ -93,7 +93,7 @@ const getTop100Pool = async ({ excludeIds = [], transaction = null } = {}) => {
     },
     group: ["User.id"],
     order: [["total_points", "DESC"]],
-    limit: 100, // Ajustado a 100 para cumplir con el Top 100 real
+    limit: 10, // Ajustado a 100 para cumplir con el Top 100 real
     raw: true,
     transaction,
   });
