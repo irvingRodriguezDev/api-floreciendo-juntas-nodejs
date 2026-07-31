@@ -10,7 +10,9 @@ const sequelize = require("../config/db");
 const { v4: uuidv4 } = require("uuid");
 const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
-
+const dayjs = require("dayjs");
+const customParseFormat = require("dayjs/plugin/customParseFormat");
+dayjs.extend(customParseFormat);
 // 1️⃣ LOGIN OPTIMIZADO (Donde fallaba la conexión)
 const login = async (req, res) => {
   try {
@@ -117,6 +119,7 @@ const me = async (req, res) => {
         "roleId",
         "createdAt",
         "tiktokUsername",
+        "birthDate",
       ],
       include: [
         {
@@ -133,7 +136,10 @@ const me = async (req, res) => {
     });
 
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
+    const formattedDate = dayjs().format("MM-DD");
+    const dayBirth = dayjs(user.birthDate).format("MM-DD");
 
+    const todayIsBirthDay = dayBirth === formattedDate;
     const subscriptions = user.Subscriptions || [];
 
     // 1. Buscamos primero si tiene alguna suscripción VÁLIDA (active o past_due)
@@ -172,6 +178,7 @@ const me = async (req, res) => {
         ...user.get({ plain: true }),
         isSubscribed,
         profileImage: getS3Url(user.profileImage),
+        todayIsBirthDay,
         subscriptionDetails: currentSub
           ? {
               id: currentSub.id,
@@ -444,6 +451,67 @@ const updateInfoUser = async (req, res) => {
     });
   }
 };
+const saveBirthDate = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { birthDate } = req.body;
+
+    if (!birthDate) {
+      return res.status(400).json({
+        message: "La fecha de cumpleaños es obligatoria.",
+      });
+    }
+
+    // 🔑 Usamos Day.js para formatear la fecha a YYYY-MM-DD
+    let formattedBirthDate;
+
+    if (typeof birthDate === "string" && birthDate.length === 5) {
+      // Si viene como "MM-DD", le pasamos el formato explícito a Day.js
+      formattedBirthDate = dayjs(birthDate, "MM-DD").format("2000-MM-DD");
+    } else {
+      // Si viene como ISO / YYYY-MM-DD
+      formattedBirthDate = dayjs(birthDate).format("YYYY-MM-DD");
+    }
+
+    // Validamos que sea una fecha válida en Day.js
+    if (!dayjs(formattedBirthDate, "YYYY-MM-DD", true).isValid()) {
+      return res.status(400).json({
+        message: "El formato de la fecha de cumpleaños no es válido.",
+      });
+    }
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "Usuario no encontrado.",
+      });
+    }
+
+    if (user.birthDate) {
+      return res.status(400).json({
+        message:
+          "La fecha de cumpleaños ya ha sido registrada previamente y no se puede cambiar.",
+      });
+    }
+
+    // Al asignarle a Sequelize la cadena limpia "2000-MM-DD",
+    // Sequelize la sanitiza sin lanzar ningún warning.
+    user.birthDate = formattedBirthDate;
+    await user.save();
+
+    return res.status(200).json({
+      message: "Tu fecha de cumpleaños se ha registrado exitosamente.",
+      birthDate: user.birthDate,
+    });
+  } catch (error) {
+    console.error("Ocurrió un error al guardar la fecha de cumpleaños:", error);
+    return res.status(500).json({
+      message: "Ocurrió un problema al guardar la información.",
+      error: error.message,
+    });
+  }
+};
 module.exports = {
   register,
   login,
@@ -454,4 +522,5 @@ module.exports = {
   resetPassword,
   uploadProfileImage,
   updateInfoUser,
+  saveBirthDate,
 };

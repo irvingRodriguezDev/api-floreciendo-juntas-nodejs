@@ -80,6 +80,10 @@ const User = sequelize.define(
       type: DataTypes.STRING,
       allowNull: true, // Almacena el ID de la suscripción de Stripe (sub_...)
     },
+    birthDate: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
   },
   {
     tableName: "Users",

@@ -9,6 +9,7 @@ const {
   resetPassword,
   uploadProfileImage,
   updateInfoUser,
+  saveBirthDate,
 } = require("../controllers/AuthController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
@@ -25,6 +26,7 @@ router.post(
   authMiddleware,
   uploadProfileImage,
 );
+router.post("/saveBirthDate", authMiddleware, saveBirthDate);
 router.get("/profile", authMiddleware, profile);
 router.get("/me", authMiddleware, me);
 router.put("/user/update", authMiddleware, updateInfoUser);
