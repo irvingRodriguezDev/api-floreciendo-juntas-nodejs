@@ -5,15 +5,11 @@ const getNotifications = async (req, res) => {
 
     const { limit = 50, offset = 0, unread } = req.query;
 
-    const where = { userId };
-
-    if (unread === "true") {
-      where.readAt = null;
-    }
+    const where = { user_id: userId, readAt: null };
 
     const notifications = await Notifications.findAll({
       where,
-      order: [["createdAt", "DESC"]],
+      order: [["readAt", "DESC"]],
       limit: Number(limit),
       offset: Number(offset),
     });

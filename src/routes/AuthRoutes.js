@@ -10,6 +10,7 @@ const {
   uploadProfileImage,
   updateInfoUser,
   saveBirthDate,
+  getTodayBirthdays,
 } = require("../controllers/AuthController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
@@ -28,6 +29,7 @@ router.post(
 );
 router.post("/saveBirthDate", authMiddleware, saveBirthDate);
 router.get("/profile", authMiddleware, profile);
+router.get("/cumpleaneras", authMiddleware, getTodayBirthdays);
 router.get("/me", authMiddleware, me);
 router.put("/user/update", authMiddleware, updateInfoUser);
 router.post("/logout", authMiddleware, logout);

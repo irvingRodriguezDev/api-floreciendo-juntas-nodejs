@@ -1,3 +1,4 @@
+const dayjs = require("dayjs");
 const getS3Url = require("../helpers/getS3Url");
 const { CourseProgress, Course, ImageCourses } = require("../models");
 const { Op } = require("sequelize");
@@ -24,7 +25,7 @@ const countCoursesCompletedByUser = async (req, res) => {
   } catch (error) {
     console.error(
       "Error al obtener los cursos completados por usuario:",
-      error
+      error,
     );
     return res.status(500).json({
       message: "Error al obtener la información",

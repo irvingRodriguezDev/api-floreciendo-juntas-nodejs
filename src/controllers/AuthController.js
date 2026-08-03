@@ -12,6 +12,7 @@ const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const dayjs = require("dayjs");
 const customParseFormat = require("dayjs/plugin/customParseFormat");
+const { Op } = require("sequelize");
 dayjs.extend(customParseFormat);
 // 1️⃣ LOGIN OPTIMIZADO (Donde fallaba la conexión)
 const login = async (req, res) => {
@@ -512,6 +513,51 @@ const saveBirthDate = async (req, res) => {
     });
   }
 };
+
+const getTodayBirthdays = async (req, res) => {
+  try {
+    const currentUserId = req.user?.id; // ID de la usuaria autenticada
+
+    // 🔑 1. Obtenemos Mes (MM) y Día (DD) actuales
+    const currentMonth = dayjs().format("MM");
+    const currentDay = dayjs().format("DD");
+
+    // 🔑 2. Consulta con Sequelize extrayendo Mes y Día independientemente del año guardado
+    const usersList = await User.findAll({
+      where: {
+        isSubscribed: true,
+        // Excluimos a la usuaria actual de la lista
+        ...(currentUserId && { id: { [Op.ne]: currentUserId } }),
+
+        // Comparamos el mes y día directamente sobre la columna birthDate de la BD
+        [Op.and]: [
+          sequelize.where(
+            sequelize.fn("MONTH", sequelize.col("birthDate")),
+            currentMonth,
+          ),
+          sequelize.where(
+            sequelize.fn("DAY", sequelize.col("birthDate")),
+            currentDay,
+          ),
+        ],
+      },
+      // Seleccionamos solo los campos públicos necesarios por privacidad/desempeño
+      attributes: ["id", "name", "profileImage"],
+      order: [["id", "DESC"]],
+    });
+    const users = usersList.map((c) => ({
+      ...c.toJSON(),
+      profileImage: c.profileImage ? getS3Url(c.profileImage) : null,
+    }));
+    return res.status(200).json({ users });
+  } catch (error) {
+    console.error("Error al obtener cumpleañeras:", error);
+    return res.status(500).json({
+      message: "Ocurrió un error al obtener la lista de cumpleañeras.",
+      error: error.message,
+    });
+  }
+};
 module.exports = {
   register,
   login,
@@ -523,4 +569,5 @@ module.exports = {
   uploadProfileImage,
   updateInfoUser,
   saveBirthDate,
+  getTodayBirthdays,
 };

@@ -50,6 +50,8 @@ const DownloadedCertificate = require("./DownloadedCertificate");
 const Formations = require("./Formations");
 const DeliveryFormations = require("./DeliveryFormations");
 const FormationsModules = require("./FormationsModules");
+const Conversation = require("./Conversation");
+const Message = require("./Message");
 // Registrar modelos
 const db = {
   sequelize,
@@ -100,6 +102,8 @@ const db = {
   Formations,
   DeliveryFormations,
   FormationsModules,
+  Conversation,
+  Message,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -378,6 +382,15 @@ EvaluationScore.belongsTo(ModuleCriterion, {
   as: "criterion",
 });
 
+// --- RELACIONES DE CONVERSATION ---
+Conversation.belongsTo(User, { as: "sender", foreignKey: "senderId" });
+Conversation.belongsTo(User, { as: "receiver", foreignKey: "receiverId" });
+Conversation.hasMany(Message, { as: "messages", foreignKey: "conversationId" });
+
+// --- RELACIONES DE MESSAGE ---
+Message.belongsTo(Conversation, { foreignKey: "conversationId" });
+Message.belongsTo(User, { as: "sender", foreignKey: "senderId" });
+Message.belongsTo(User, { as: "receiver", foreignKey: "receiverId" });
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
