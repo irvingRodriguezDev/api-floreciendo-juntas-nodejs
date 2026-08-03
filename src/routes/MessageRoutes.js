@@ -7,7 +7,7 @@ const {
   getMessagesByConversation,
   markAsRead,
   getUnreadCount,
-} = require("../controllers/messageController");
+} = require("../controllers/MessageController");
 router.post("/wish-birthday", authMiddleware, sendBirthdayWish);
 router.get("/conversations", authMiddleware, getConversations);
 router.get(
