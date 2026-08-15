@@ -275,7 +275,7 @@ const getFeed = async (req, res) => {
       {
         model: User,
         as: "user",
-        attributes: ["id", "name", "profileImage"],
+        attributes: ["id", "name", "profileImage", "isVerified"],
       },
       {
         model: PostMedia,
@@ -297,7 +297,7 @@ const getFeed = async (req, res) => {
           {
             model: User,
             as: "user",
-            attributes: ["id", "name", "profileImage"],
+            attributes: ["id", "name", "profileImage", "isVerified"],
           },
         ],
       },

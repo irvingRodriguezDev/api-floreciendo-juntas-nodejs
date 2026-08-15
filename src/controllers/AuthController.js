@@ -121,6 +121,7 @@ const me = async (req, res) => {
         "createdAt",
         "tiktokUsername",
         "birthDate",
+        "isVerified",
       ],
       include: [
         {

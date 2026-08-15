@@ -14,12 +14,17 @@ const {
   downloadDiploma,
 } = require("../controllers/FormationsController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
-const { upload } = require("../middlewares/uploadCourseImage");
+const { handleUpload, upload } = require("../middlewares/uploadCourseImage");
 
-router.post("/", upload.single("diploma"), authMiddleware, createFormation);
+router.post(
+  "/",
+  handleUpload(upload.single("diploma")),
+  authMiddleware,
+  createFormation,
+);
 router.post(
   "/submit-delivery/:moduleFormationId",
-  upload.single("evidence"),
+  handleUpload(upload.single("evidence")),
   authMiddleware,
   submitModuleDelivery,
 );
@@ -30,7 +35,12 @@ router.get("/formation-progress/:id", authMiddleware, showFormationProgress);
 router.get("/download-diploma", authMiddleware, downloadDiploma);
 router.get("/:id", authMiddleware, showFormation);
 router.get("/:id/modules", getFormationModules);
-router.put("/:id", upload.single("diploma"), authMiddleware, updateFormation);
+router.put(
+  "/:id",
+  handleUpload(upload.single("diploma")),
+  authMiddleware,
+  updateFormation,
+);
 router.delete("/:id", authMiddleware, deleteFormation);
 
 module.exports = router;
