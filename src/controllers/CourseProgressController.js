@@ -36,79 +36,93 @@ const getProgress = async (req, res) => {
   }
 };
 
-
 const updateProgress = async (req, res) => {
   try {
     const userId = Number(req.params.userId);
     const courseId = Number(req.params.courseId);
-    const { secondsWatched = 0, percent = 0, certificate_enabled = false } = req.body;
+    const {
+      secondsWatched = 0,
+      percent = 0,
+      certificate_enabled = false,
+    } = req.body;
 
-    // 1. Declaramos una variable para guardar el resultado
     let result;
 
-    // 2. La transacción solo hace trabajo de DB
     await sequelize.transaction(async (t) => {
-      let userProgress = await CourseProgress.findOne({
+      // 1. findOrCreate evita la condición de carrera a nivel de BD
+      const [userProgress, created] = await CourseProgress.findOrCreate({
         where: { userId, courseId },
+        defaults: {
+          lastWatchedSeconds: secondsWatched,
+          percent: certificate_enabled ? 100 : percent,
+          certificateEnabled: certificate_enabled,
+          completedAt: certificate_enabled ? new Date() : null,
+        },
         transaction: t,
+        lock: t.LOCK.UPDATE, // Bloquea la fila para evitar escrituras concurrentes
       });
 
-      if (!userProgress) {
-        userProgress = await CourseProgress.create(
-          {
-            userId,
-            courseId,
-            lastWatchedSeconds: secondsWatched,
-            percent: certificate_enabled ? 100 : percent,
-            certificateEnabled: certificate_enabled,
-            completedAt: certificate_enabled ? new Date() : null,
-          },
-          { transaction: t },
-        );
-
+      // 2. Si recién se creó el registro
+      if (created) {
         if (certificate_enabled) {
           await addPoints(
             userId,
-            10, 
-            "course_completed", 
-            courseId, 
+            10,
+            "course_completed",
+            courseId,
             "Completó el curso",
-             t,
-            );
+            t,
+          );
         }
         result = userProgress;
-        return; // Terminamos el callback, permitiendo el COMMIT
+        return;
       }
 
+      // 3. Si ya existía y ya tiene certificado, no modificamos nada
       if (userProgress.certificateEnabled) {
         result = userProgress;
         return;
       }
 
-      // 🔥 BLINDAJE: Nos aseguramos de que el porcentaje y segundos NUNCA retrocedan
-      userProgress.lastWatchedSeconds = Math.max(userProgress.lastWatchedSeconds || 0, secondsWatched);
-      userProgress.percent = certificate_enabled ? 100 : Math.max(userProgress.percent || 0, percent);
+      // 4. Si ya existía, actualizamos asegurando que porcentaje y segundos nunca retrocedan
+      const newPercent = certificate_enabled
+        ? 100
+        : Math.max(userProgress.percent || 0, percent);
+      const newSeconds = Math.max(
+        userProgress.lastWatchedSeconds || 0,
+        secondsWatched,
+      );
 
-      if (certificate_enabled) {
+      userProgress.lastWatchedSeconds = newSeconds;
+      userProgress.percent = newPercent;
+
+      let shouldAddPoints = false;
+      if (certificate_enabled && !userProgress.certificateEnabled) {
         userProgress.certificateEnabled = true;
         userProgress.completedAt = new Date();
+        shouldAddPoints = true;
       }
 
       await userProgress.save({ transaction: t });
 
-      if (certificate_enabled) {
-        await addPoints(userId, 10, "course_completed", courseId, "Completó el curso", t);
+      if (shouldAddPoints) {
+        await addPoints(
+          userId,
+          10,
+          "course_completed",
+          courseId,
+          "Completó el curso",
+          t,
+        );
       }
 
       result = userProgress;
     });
 
-    // 3. ENVIAMOS LA RESPUESTA FUERA (Aquí la conexión ya regresó al pool)
     return res.json(result);
   } catch (error) {
     console.error("updateProgress error:", error);
-    // Si la transacción falla, Sequelize hace ROLLBACK automáticamente aquí
-    res.status(500).json({ error: "Error al actualizar el progreso" });
+    return res.status(500).json({ error: "Error al actualizar el progreso" });
   }
 };
 

@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const liveController = require("../controllers/LiveController");
-const { upload } = require("../middlewares/uploadCourseImage");
+const { upload, handleUpload } = require("../middlewares/uploadCourseImage");
 router.post("/webhooks/ivs", liveController.handleIvsWebhook);
 router.get("/", liveController.getAllLives);
 router.get("/:id", liveController.getLiveById);
@@ -16,13 +16,13 @@ router.post(
 );
 router.post(
   "/",
-  upload.single("file"),
+  handleUpload(upload.single("file")),
   authMiddleware,
   liveController.createLive,
 );
 router.put(
   "/:id",
-  upload.single("file"),
+  handleUpload(upload.single("file")),
   authMiddleware,
   liveController.updateLive,
 );

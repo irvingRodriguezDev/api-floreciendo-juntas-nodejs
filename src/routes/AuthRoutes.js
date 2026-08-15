@@ -14,7 +14,7 @@ const {
 } = require("../controllers/AuthController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
-const { upload } = require("../middlewares/uploadCourseImage");
+const { handleUpload, upload } = require("../middlewares/uploadCourseImage");
 const verifyCaptcha = require("../middlewares/verifyCaptcha");
 const router = express.Router();
 
@@ -23,7 +23,7 @@ router.post("/reset-password", verifyCaptcha, resetPassword); // usuario normal
 router.post("/login", login);
 router.post(
   "/uploadProfileImage",
-  upload.single("file"),
+  handleUpload(upload.single("file")),
   authMiddleware,
   uploadProfileImage,
 );

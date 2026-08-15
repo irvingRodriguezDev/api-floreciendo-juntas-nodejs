@@ -5,13 +5,13 @@ const { authMiddleware } = require("../middlewares/authMiddleware");
 const PostCtrl = require("../controllers/CommunityPostController");
 const CommentCtrl = require("../controllers/CommunityComentController");
 const ReactionCtrl = require("../controllers/CommunityReactionController");
-const { upload } = require("../middlewares/uploadCourseImage");
+const { handleUpload, upload } = require("../middlewares/uploadCourseImage");
 
 // POSTS
 // En tu archivo de rutas:
 router.post(
   "/posts",
-  upload.single("attachment"),
+  handleUpload(upload.single("attachment")),
   authMiddleware,
   PostCtrl.createPost,
 );
