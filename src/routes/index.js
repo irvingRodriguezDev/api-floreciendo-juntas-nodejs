@@ -39,6 +39,7 @@ const ModuleFormationsRoutes = require("./ModuleFormationsRoutes");
 const SubscriptionRoutes = require("./SubscriptionRoutes");
 const { getLiveChatToken } = require("../controllers/LiveChatController");
 const MessagesRoutes = require("./MessageRoutes");
+const StoryRouter = require("./StoryRoutes");
 router.use("/auth", authRoutes);
 router.use("/payment", paymentRoutes);
 router.use("/webhook", webhookRoutes);
@@ -77,5 +78,6 @@ router.use("/formations", FormationRoutes);
 router.use("/module-formations", ModuleFormationsRoutes);
 router.use("/subscriptions", SubscriptionRoutes);
 router.use("/messages", MessagesRoutes);
+router.use("/stories", StoryRouter);
 
 module.exports = router;

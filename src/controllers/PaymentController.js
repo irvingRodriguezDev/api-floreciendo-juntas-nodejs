@@ -30,7 +30,7 @@ const getOrCreateStripeCustomer = async (user) => {
   if (existingCustomers.data.length > 0) {
     // Preferir el que tenga suscripciones activas, si no el más reciente
     const withSub = existingCustomers.data.find(
-      (c) => c.subscriptions?.total_count > 0,
+      (c) => c.subscriptions?.total_count > 0
     );
     const best = withSub || existingCustomers.data[0];
     await user.update({ stripe_id: best.id });
@@ -67,7 +67,7 @@ const crearSesionSuscripcionMensual = async (req, res) => {
     });
 
     const suscripcionVigente = subsEnStripe.data.find((sub) =>
-      ["active", "trialing", "past_due"].includes(sub.status),
+      ["active", "trialing", "past_due"].includes(sub.status)
     );
 
     if (suscripcionVigente) {
@@ -151,7 +151,7 @@ const cancelSubscription = async (req, res) => {
     // 1. Notificamos a Stripe que no renueve al final del periodo
     const stripeResponse = await stripe.subscriptions.update(
       subscription.stripe_subscription_id,
-      { cancel_at_period_end: true },
+      { cancel_at_period_end: true }
     );
 
     // 2. Actualizamos nuestra BD SIN quitar el acceso todavía
@@ -199,7 +199,7 @@ const reactivateSubscription = async (req, res) => {
 
     const stripeResponse = await stripe.subscriptions.update(
       subscription.stripe_subscription_id,
-      { cancel_at_period_end: false },
+      { cancel_at_period_end: false }
     );
 
     const nextRenewalDate = moment

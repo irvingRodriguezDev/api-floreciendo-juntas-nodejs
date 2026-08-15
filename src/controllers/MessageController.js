@@ -77,7 +77,11 @@ const sendBirthdayWish = async (req, res) => {
 
         const notifTitle = isBirthday
           ? "🥳 ¡Te han felicitado por tu cumpleaños! 🥳"
-          : `💬 Nuevo mensaje de ${userSender}`;
+          : type === "REPLY_STORY"
+            ? ` ${userSender} respondio tu historia`
+            : type === "REACTION_STORY"
+              ? `${userSender} Reacciono a tu historia`
+              : `💬 Nuevo mensaje de ${userSender}`;
 
         const notifBody = isBirthday
           ? `${userSender} te envió una felicitación de cumpleaños.`
@@ -123,7 +127,7 @@ const sendBirthdayWish = async (req, res) => {
               senderId: String(senderId),
             },
           }).catch((pushErr) =>
-            console.error("❌ Error en Push FCM de mensajería:", pushErr),
+            console.error("❌ Error en Push FCM de mensajería:", pushErr)
           );
         }
       } catch (err) {
@@ -258,7 +262,7 @@ const markAsRead = async (req, res) => {
           receiverId: userId,
           read: false,
         },
-      },
+      }
     );
 
     return res.status(200).json({ message: "Mensajes marcados como leídos." });

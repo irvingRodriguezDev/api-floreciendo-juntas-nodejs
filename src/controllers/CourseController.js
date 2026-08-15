@@ -134,6 +134,11 @@ const getCourses = async (req, res) => {
           required: false, // si no hay imagen activa, igualmente trae el curso
         },
         {
+          model: CourseVideo,
+          as: "videos",
+          where: { is_active: true },
+        },
+        {
           model: CertificateCourse,
           as: "certificates",
           where: { is_active: true },
@@ -238,21 +243,20 @@ const getCoursesPaginate = async (req, res) => {
     const { page = 1, limit = 10, search = "" } = req.query;
 
     const isSearchMode = search.trim() !== "";
-
     const queryOptions = {
       where: {},
       include: [
+        {
+          model: CourseVideo,
+          as: "videos",
+          where: { is_active: true },
+          required: true,
+        },
         {
           model: ImageCourses,
           as: "images",
           where: { is_active: true },
           required: false,
-        },
-        {
-          model: CourseVideo,
-          as: "videos", // Asegúrate de usar el mismo alias definido en la asociación
-          where: { is_active: true },
-          required: true, // el curso puede no tener video aún
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -268,7 +272,6 @@ const getCoursesPaginate = async (req, res) => {
       };
 
       const courses = await Course.findAll(queryOptions);
-
       const formatted = courses.map((c) => ({
         ...c.toJSON(),
         cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
@@ -289,7 +292,7 @@ const getCoursesPaginate = async (req, res) => {
     queryOptions.limit = parsedLimit;
     queryOptions.offset = offset;
 
-    const result = await Course.findAndCountAll(queryOptions);
+    const result = await Course.findAndCountAll({ queryOptions });
 
     const formatted = result.rows.map((c) => ({
       ...c.toJSON(),
@@ -595,7 +598,7 @@ const updateCourse = async (req, res) => {
             course.images?.length > 0
               ? ImageCourses.update(
                   { is_active: false },
-                  { where: { courseId: id } },
+                  { where: { courseId: id } }
                 )
               : Promise.resolve(),
             uploadToS3("courses", imageFile, `img_${course.id}_${Date.now()}`),
@@ -607,13 +610,13 @@ const updateCourse = async (req, res) => {
             course.certificates?.length > 0
               ? CertificateCourse.update(
                   { is_active: false },
-                  { where: { courseId: id } },
+                  { where: { courseId: id } }
                 )
               : Promise.resolve(),
             uploadToS3(
               "certificates",
               certificateFile,
-              `cert_${course.id}_${Date.now()}`,
+              `cert_${course.id}_${Date.now()}`
             ),
           ]).then(([, key]) => key)
         : Promise.resolve(null),

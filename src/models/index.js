@@ -52,6 +52,9 @@ const DeliveryFormations = require("./DeliveryFormations");
 const FormationsModules = require("./FormationsModules");
 const Conversation = require("./Conversation");
 const Message = require("./Message");
+const Story = require("./Story");
+const StoryView = require("./StoryView");
+
 // Registrar modelos
 const db = {
   sequelize,
@@ -104,6 +107,8 @@ const db = {
   FormationsModules,
   Conversation,
   Message,
+  Story,
+  StoryView,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -391,6 +396,13 @@ Conversation.hasMany(Message, { as: "messages", foreignKey: "conversationId" });
 Message.belongsTo(Conversation, { foreignKey: "conversationId" });
 Message.belongsTo(User, { as: "sender", foreignKey: "senderId" });
 Message.belongsTo(User, { as: "receiver", foreignKey: "receiverId" });
+// Usuario -> Historias
+User.hasMany(Story, { foreignKey: "userId", as: "stories" });
+Story.belongsTo(User, { foreignKey: "userId", as: "user" });
+
+// Vistas de Historias
+Story.hasMany(StoryView, { foreignKey: "storyId", as: "views" });
+StoryView.belongsTo(User, { foreignKey: "viewerId", as: "viewer" });
 // 🔹 Ejecutar asociaciones internas (si existen)
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {

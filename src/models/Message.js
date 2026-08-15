@@ -45,7 +45,13 @@ const Message = sequelize.define(
     },
     // Tipo de mensaje opcional (ej: 'BIRTHDAY_WISH', 'TEXT') por si quieres estilizarlo especial en el chat
     type: {
-      type: DataTypes.ENUM("TEXT", "BIRTHDAY_WISH", "DIRECT_MESSAGE"),
+      type: DataTypes.ENUM(
+        "TEXT",
+        "BIRTHDAY_WISH",
+        "DIRECT_MESSAGE",
+        "REPLY_STORY",
+        "REACTION_STORY"
+      ),
       defaultValue: "TEXT",
     },
   },
@@ -60,7 +66,7 @@ const Message = sequelize.define(
         fields: ["receiverId", "read"], // Agiliza el conteo de mensajes no leídos (badge de notificación)
       },
     ],
-  },
+  }
 );
 
 module.exports = Message;

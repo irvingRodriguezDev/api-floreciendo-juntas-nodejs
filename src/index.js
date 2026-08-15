@@ -31,10 +31,11 @@ const corsOptions = {
     "https://www.admin.floreciendojuntas.com",
     "https://eventoswapizima.com",
     "https://localhost:3000",
-    "http://localhost:3001",
+    "https://localhost:3001",
     "http://localhost:3000",
     "http://localhost:5173",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
+    "https://mothers-totally-consistent-assign.trycloudflare.com",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -51,17 +52,17 @@ app.get("/health", (req, res) => {
 app.post(
   "/webhooks/stripe/subscription",
   express.raw({ type: "application/json" }),
-  webhookController.handleSubscriptionStripeWebhook,
+  webhookController.handleSubscriptionStripeWebhook
 );
 app.post(
   "/webhooks/stripe/ticket",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleTicketStripeWebhook,
+  webhookController.handleTicketStripeWebhook
 );
 app.post(
   "/webhooks/stripe/order-payments",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleOrderPaymentStripeWebhook,
+  webhookController.handleOrderPaymentStripeWebhook
 );
 app.use(cors(corsOptions));
 // app.options("*", cors(corsOptions));

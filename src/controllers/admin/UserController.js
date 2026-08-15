@@ -1,13 +1,36 @@
 // controllers/raffleController.js
 const { format } = require("date-fns");
 const getS3Url = require("../../helpers/getS3Url");
-const { User, MonthlyPrize, RaffleWinner } = require("../../models");
+const {
+  User,
+  MonthlyPrize,
+  RaffleWinner,
+  Subscription,
+} = require("../../models");
 const { getEligibleUsers, getTop100Pool } = require("../../helpers/raffle");
 const sequelize = require("../../config/db");
 
 const getAllUsers = async (req, res) => {
   try {
-    const allUsers = await User.findAll();
+    const allUsers = await User.findAll({
+      include: [
+        {
+          model: Subscription,
+          as: "Subscriptions",
+          required: false,
+          attributes: [
+            "status",
+            "stripe_subscription_id",
+            "stripe_customer_id",
+            "start_date",
+            "next_renewal",
+            "deletedAt",
+            "last_payment_at",
+          ],
+          // Ordenamos para que las más recientes y activas tengan prioridad
+        },
+      ],
+    });
     const formatted = allUsers.map((c) => ({
       ...c.toJSON(),
       profileImageUrl: c.profileImage ? getS3Url(c.profileImage) : null,
@@ -97,12 +120,12 @@ const runRaffleOneWinner = async (req, res) => {
 
         // Escudo secundario en memoria por si el operador SQL falló
         top100 = top100.filter(
-          (user) => !numericExcludedIds.includes(Number(user.id)),
+          (user) => !numericExcludedIds.includes(Number(user.id))
         );
 
         if (!top100.length) {
           throw new Error(
-            "No hay usuarios elegibles en el Top 100 para el premio premium.",
+            "No hay usuarios elegibles en el Top 100 para el premio premium."
           );
         }
 
@@ -119,12 +142,12 @@ const runRaffleOneWinner = async (req, res) => {
 
         // Escudo secundario en memoria por si el operador SQL falló
         eligibleUsersList = eligibleUsersList.filter(
-          (user) => !numericExcludedIds.includes(Number(user.id)),
+          (user) => !numericExcludedIds.includes(Number(user.id))
         );
 
         if (!eligibleUsersList.length) {
           throw new Error(
-            "No hay usuarios elegibles para el sorteo de este premio.",
+            "No hay usuarios elegibles para el sorteo de este premio."
           );
         }
 
@@ -152,7 +175,7 @@ const runRaffleOneWinner = async (req, res) => {
       // Failsafe final: Si por algún motivo místico se llegó hasta aquí con un clon, cancelamos
       if (winnerUser && numericExcludedIds.includes(Number(winnerUser.id))) {
         throw new Error(
-          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`,
+          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`
         );
       }
 
@@ -173,7 +196,7 @@ const runRaffleOneWinner = async (req, res) => {
           raffle_month: currentMonth,
           position: winnersCount + 1,
         },
-        { transaction: t },
+        { transaction: t }
       );
 
       await prize.update({ status: "awarded" }, { transaction: t });
