@@ -18,7 +18,11 @@ dayjs.extend(customParseFormat);
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-
+    if (!email || typeof email !== "string" || !password) {
+      return res.status(400).json({
+        error: "Se requieren un email y contraseña válidos.",
+      });
+    }
     const user = await User.findOne({ where: { email } });
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(400).json({ msg: "Credenciales inválidas" });

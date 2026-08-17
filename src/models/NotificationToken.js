@@ -17,7 +17,6 @@ const NotificationToken = sequelize.define(
     token: {
       type: DataTypes.STRING(512), // Suficiente para FCM y permite indexación rápida
       allowNull: false,
-      unique: true,
     },
     device: {
       type: DataTypes.STRING(100),

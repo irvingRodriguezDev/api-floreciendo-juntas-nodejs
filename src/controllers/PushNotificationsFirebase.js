@@ -10,52 +10,52 @@ const saveNotificationToken = async (req, res) => {
       return res.status(400).json({ error: "El token es requerido" });
     }
 
-    // 1. Si este mismo 'token' pertenecía a otro usuario en esta misma máquina,
-    // lo desvinculamos o desactivamos para no enviar notificaciones cruzadas.
-    await NotificationToken.update({ isActive: false }, { where: { token } });
+    // 1. Si el token pertenecía a OTRO usuario en esta máquina, lo eliminamos
+    await NotificationToken.destroy({
+      where: {
+        token,
+        userId: { [Sequelize.Op.ne]: userId },
+      },
+    });
 
-    // 2. Si tenemos browserId, buscamos si ya existe el par (userId + browserId)
-    let existingTokenRecord = null;
+    // 2. Si tenemos browserId, usamos la restricción compuesta (userId + browserId)
     if (browserId) {
-      existingTokenRecord = await NotificationToken.findOne({
+      const [record, created] = await NotificationToken.findOrCreate({
         where: { userId, browserId },
+        defaults: {
+          userId,
+          browserId,
+          token,
+          device: device || "web",
+          isActive: true,
+        },
       });
-    }
 
-    // 3. Si no se encontró por (userId + browserId), buscamos directamente por token
-    if (!existingTokenRecord) {
-      existingTokenRecord = await NotificationToken.findOne({
-        where: { token },
-      });
-    }
-
-    // 4. Si ya existe el registro (sea por browserId o por token), lo ACTUALIZAMOS
-    if (existingTokenRecord) {
-      await existingTokenRecord.update({
-        userId,
-        token, // Actualiza el token si Firebase entregó uno nuevo
-        device: device || existingTokenRecord.device || "web",
-        browserId: browserId || existingTokenRecord.browserId,
-        isActive: true,
-      });
+      // Si ya existía la combinación usuario + navegador, actualizamos el token
+      if (!created) {
+        await record.update({
+          token,
+          device: device || record.device || "web",
+          isActive: true,
+        });
+      }
     } else {
-      // 5. Si es un navegador/dispositivo totalmente nuevo, lo CREAMOS
-      await NotificationToken.create({
+      // Si no viene browserId, buscamos directamente por token
+      await NotificationToken.upsert({
         userId,
         token,
         device: device || "web",
-        browserId: browserId || null,
         isActive: true,
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: "Token de notificación actualizado correctamente",
+      message: "Token actualizado correctamente",
     });
   } catch (error) {
     console.error("❌ Error guardando NotificationToken:", error);
-    return res.status(500).json({ error: "Error al guardar token" });
+    return res.status(500).json({ error: "Error interno al guardar token" });
   }
 };
 

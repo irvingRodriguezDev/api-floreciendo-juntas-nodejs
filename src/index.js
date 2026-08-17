@@ -52,17 +52,17 @@ app.get("/health", (req, res) => {
 app.post(
   "/webhooks/stripe/subscription",
   express.raw({ type: "application/json" }),
-  webhookController.handleSubscriptionStripeWebhook
+  webhookController.handleSubscriptionStripeWebhook,
 );
 app.post(
   "/webhooks/stripe/ticket",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleTicketStripeWebhook
+  webhookController.handleTicketStripeWebhook,
 );
 app.post(
   "/webhooks/stripe/order-payments",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleOrderPaymentStripeWebhook
+  webhookController.handleOrderPaymentStripeWebhook,
 );
 app.use(cors(corsOptions));
 // app.options("*", cors(corsOptions));
@@ -89,7 +89,13 @@ io.on("connection", (socket) => {
 // ==============================
 app.use("/api", routes);
 
-app.use((req, res) => {
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      error: "Petición rechazada: El cuerpo enviado no es un JSON válido.",
+    });
+  }
+  next(err);
   res.status(404).json({ msg: "Ruta no encontrada" });
 });
 
