@@ -250,7 +250,7 @@ const getCoursesPaginate = async (req, res) => {
           model: CourseVideo,
           as: "videos",
           where: { is_active: true },
-          required: true,
+          required: true, // Filtra solo cursos con al menos 1 video activo
         },
         {
           model: ImageCourses,
@@ -260,6 +260,7 @@ const getCoursesPaginate = async (req, res) => {
         },
       ],
       order: [["createdAt", "DESC"]],
+      distinct: true, // 🚀 CRÍTICO: Evita contar duplicados por el JOIN con videos
     };
 
     // 🟢 MODO BÚSQUEDA
@@ -271,12 +272,19 @@ const getCoursesPaginate = async (req, res) => {
         ],
       };
 
+      // Corregido: Pasar queryOptions directamente
       const courses = await Course.findAll(queryOptions);
-      const formatted = courses.map((c) => ({
-        ...c.toJSON(),
-        cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
-        video_url: c.video?.cloudfrontUrl || null, // 👈 URL del video activo
-      }));
+
+      const formatted = courses.map((c) => {
+        const plainCourse = c.toJSON();
+        return {
+          ...plainCourse,
+          cover_image_url: plainCourse.images?.[0]
+            ? getS3Url(plainCourse.images[0].s3_key)
+            : null,
+          video_url: plainCourse.videos?.[0]?.cloudfrontUrl || null,
+        };
+      });
 
       return res.json({
         totalItems: formatted.length,
@@ -292,18 +300,24 @@ const getCoursesPaginate = async (req, res) => {
     queryOptions.limit = parsedLimit;
     queryOptions.offset = offset;
 
-    const result = await Course.findAndCountAll({ queryOptions });
+    // findAndCountAll usará la cláusula COUNT(DISTINCT Course.id) gracias a 'distinct: true'
+    const result = await Course.findAndCountAll(queryOptions);
 
-    const formatted = result.rows.map((c) => ({
-      ...c.toJSON(),
-      cover_image_url: c.images?.[0] ? getS3Url(c.images[0].s3_key) : null,
-      video_url: c.video?.cloudfrontUrl || null, // 👈 Agregamos el video activo
-    }));
+    const formatted = result.rows.map((c) => {
+      const plainCourse = c.toJSON();
+      return {
+        ...plainCourse,
+        cover_image_url: plainCourse.images?.[0]
+          ? getS3Url(plainCourse.images[0].s3_key)
+          : null,
+        video_url: plainCourse.videos?.[0]?.cloudfrontUrl || null,
+      };
+    });
 
     const totalPages = Math.ceil(result.count / parsedLimit);
 
     return res.json({
-      totalItems: result.count,
+      totalItems: result.count, // Ahora devolverá 47
       totalPages,
       currentPage: parsedPage,
       courses: formatted,

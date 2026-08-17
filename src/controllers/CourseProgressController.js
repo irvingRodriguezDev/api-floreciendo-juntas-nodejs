@@ -37,92 +37,126 @@ const getProgress = async (req, res) => {
 };
 
 const updateProgress = async (req, res) => {
-  try {
-    const userId = Number(req.params.userId);
-    const courseId = Number(req.params.courseId);
-    const {
-      secondsWatched = 0,
-      percent = 0,
-      certificate_enabled = false,
-    } = req.body;
+  const userId = Number(req.params.userId);
+  const courseId = Number(req.params.courseId);
+  const {
+    secondsWatched = 0,
+    percent = 0,
+    certificate_enabled = false,
+  } = req.body;
 
-    let result;
+  const maxRetries = 3;
+  let attempt = 0;
 
-    await sequelize.transaction(async (t) => {
-      // 1. findOrCreate evita la condición de carrera a nivel de BD
-      const [userProgress, created] = await CourseProgress.findOrCreate({
-        where: { userId, courseId },
-        defaults: {
-          lastWatchedSeconds: secondsWatched,
-          percent: certificate_enabled ? 100 : percent,
-          certificateEnabled: certificate_enabled,
-          completedAt: certificate_enabled ? new Date() : null,
-        },
-        transaction: t,
-        lock: t.LOCK.UPDATE, // Bloquea la fila para evitar escrituras concurrentes
-      });
+  while (attempt < maxRetries) {
+    try {
+      let result;
 
-      // 2. Si recién se creó el registro
-      if (created) {
-        if (certificate_enabled) {
+      await sequelize.transaction(async (t) => {
+        // 1. Buscamos primero sin bloquear rangos
+        let userProgress = await CourseProgress.findOne({
+          where: { userId, courseId },
+          transaction: t,
+          lock: t.LOCK.UPDATE, // Aquí SÍ es seguro si la fila ya existe
+        });
+
+        let created = false;
+
+        // 2. Si no existe, usamos upsert/create limpio (sin lock explícito)
+        if (!userProgress) {
+          [userProgress, created] = await CourseProgress.findOrCreate({
+            where: { userId, courseId },
+            defaults: {
+              lastWatchedSeconds: secondsWatched,
+              percent: certificate_enabled ? 100 : percent,
+              certificateEnabled: certificate_enabled,
+              completedAt: certificate_enabled ? new Date() : null,
+            },
+            transaction: t, // SIN 'lock: t.LOCK.UPDATE' para evitar Gap Locks en la BD
+          });
+        }
+
+        // 3. Si recién se creó el registro
+        if (created) {
+          if (certificate_enabled) {
+            await addPoints(
+              userId,
+              10,
+              "course_completed",
+              courseId,
+              "Completó el curso",
+              t
+            );
+          }
+          result = userProgress;
+          return;
+        }
+
+        // 4. Si ya existía y ya tiene certificado activado, no modificamos nada
+        if (userProgress.certificateEnabled) {
+          result = userProgress;
+          return;
+        }
+
+        // 5. Si ya existía, actualizamos asegurando que no retroceda
+        const newPercent = certificate_enabled
+          ? 100
+          : Math.max(userProgress.percent || 0, percent);
+        const newSeconds = Math.max(
+          userProgress.lastWatchedSeconds || 0,
+          secondsWatched
+        );
+
+        userProgress.lastWatchedSeconds = newSeconds;
+        userProgress.percent = newPercent;
+
+        let shouldAddPoints = false;
+        if (certificate_enabled && !userProgress.certificateEnabled) {
+          userProgress.certificateEnabled = true;
+          userProgress.completedAt = new Date();
+          shouldAddPoints = true;
+        }
+
+        await userProgress.save({ transaction: t });
+
+        if (shouldAddPoints) {
           await addPoints(
             userId,
             10,
             "course_completed",
             courseId,
             "Completó el curso",
-            t,
+            t
           );
         }
+
         result = userProgress;
-        return;
-      }
+      });
 
-      // 3. Si ya existía y ya tiene certificado, no modificamos nada
-      if (userProgress.certificateEnabled) {
-        result = userProgress;
-        return;
-      }
+      // Éxito: retornamos la respuesta inmediatamente
+      return res.json(result);
+    } catch (error) {
+      attempt++;
 
-      // 4. Si ya existía, actualizamos asegurando que porcentaje y segundos nunca retrocedan
-      const newPercent = certificate_enabled
-        ? 100
-        : Math.max(userProgress.percent || 0, percent);
-      const newSeconds = Math.max(
-        userProgress.lastWatchedSeconds || 0,
-        secondsWatched,
-      );
+      // Si fue un Deadlock de MySQL (código 1213) y nos quedan reintentos, esperamos unos ms y volvemos a intentar
+      const isDeadlock =
+        error.original?.code === "ER_LOCK_DEADLOCK" ||
+        error.parent?.code === "ER_LOCK_DEADLOCK";
 
-      userProgress.lastWatchedSeconds = newSeconds;
-      userProgress.percent = newPercent;
-
-      let shouldAddPoints = false;
-      if (certificate_enabled && !userProgress.certificateEnabled) {
-        userProgress.certificateEnabled = true;
-        userProgress.completedAt = new Date();
-        shouldAddPoints = true;
-      }
-
-      await userProgress.save({ transaction: t });
-
-      if (shouldAddPoints) {
-        await addPoints(
-          userId,
-          10,
-          "course_completed",
-          courseId,
-          "Completó el curso",
-          t,
+      if (isDeadlock && attempt < maxRetries) {
+        console.warn(
+          `⚠️ Deadlock en updateProgress (intento ${attempt}/${maxRetries}). Reintentando...`
         );
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 150 + 50)
+        ); // Espera aleatoria de 50-200ms
+      } else {
+        console.error("updateProgress error fatal:", error);
+        return res
+          .status(500)
+          .json({ error: "Error al actualizar el progreso" });
       }
-
-      result = userProgress;
-    });
-
-    return res.json(result);
-  } catch (error) {
-    console.error("updateProgress error:", error);
-    return res.status(500).json({ error: "Error al actualizar el progreso" });
+    }
   }
 };
 

@@ -78,7 +78,7 @@ const createStory = async (req, res) => {
               url: notifUrl,
               data: { storyId: newStory.id },
             })),
-            { returning: true },
+            { returning: true }
           );
 
           // 2. Emitir por Socket en tiempo real a los usuarios conectados
@@ -88,12 +88,12 @@ const createStory = async (req, res) => {
 
           // 3. Recolectar tokens activos para Push (Firebase FCM)
           const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || []).map((t) => t.token),
+            (u.NotificationTokens || []).map((t) => t.token)
           );
 
           // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
           console.log(
-            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
+            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`
           );
 
           if (allTokens.length > 0) {
@@ -130,29 +130,37 @@ const getFeedStories = async (req, res) => {
   try {
     const currentUserId = req.user ? req.user.id : null;
 
-    // Obtener historias donde expiresAt > NOW()
     const activeStories = await Story.findAll({
       where: {
         expiresAt: {
-          [Op.gt]: new Date(), // Solo las de las últimas 24 horas
+          [Op.gt]: new Date(),
         },
       },
       include: [
         {
           model: User,
           as: "user",
-          attributes: ["id", "name", "profileImage"], // Ajusta según tus campos de User
+          attributes: ["id", "name", "profileImage", "createdAt"],
         },
         {
           model: StoryView,
           as: "views",
           attributes: ["viewerId"],
           required: false,
+          include: [
+            {
+              model: User,
+              as: "viewer",
+              attributes: ["id", "name", "profileImage"],
+            },
+          ],
         },
       ],
+      // Ordenamos globalmente por createdAt ASC para que dentro de cada usuario
+      // las historias queden en orden cronológico correcto (1, 2, 3...)
       order: [["createdAt", "ASC"]],
     });
-    // Agrupar historias por usuario para facilitar el renderizado en el Frontend
+
     const groupedStoriesMap = {};
 
     activeStories.forEach((story) => {
@@ -170,8 +178,7 @@ const getFeedStories = async (req, res) => {
           stories: [],
         };
       }
-
-      // Verificar si el usuario actual ya vio esta historia específica
+      // Validar si el usuario actual vio la historia
       const isSeenByCurrentUser = currentUserId
         ? story.views.some((view) => view.viewerId === currentUserId)
         : false;
@@ -180,6 +187,20 @@ const getFeedStories = async (req, res) => {
         groupedStoriesMap[author.id].hasUnseen = true;
       }
 
+      // Filtrar y mapear los viewers evitando nulos de forma segura
+      const isAuthor = currentUserId === author.id;
+      const mappedViewers = isAuthor
+        ? story.views
+            .filter((v) => v.viewer !== null && v.viewer !== undefined)
+            .map((v) => ({
+              id: v.viewer.id,
+              name: v.viewer.name,
+              profileImage: v.viewer.profileImage
+                ? getS3Url(v.viewer.profileImage)
+                : null,
+            }))
+        : [];
+
       groupedStoriesMap[author.id].stories.push({
         id: story.id,
         mediaUrl: getS3Url(story.mediaUrl),
@@ -187,11 +208,21 @@ const getFeedStories = async (req, res) => {
         createdAt: story.createdAt,
         expiresAt: story.expiresAt,
         isSeen: isSeenByCurrentUser,
+        viewsCount: story.views.length, // Contador ligero para el resto de usuarios
+        viewers: mappedViewers, // Solo se puebla si el req.user es el dueño de la historia
       });
     });
 
-    // Convertir el objeto agrupado a un Array
-    const feed = Object.values(groupedStoriesMap);
+    // Ordenar los grupos: primero los usuarios con historias NO VISTAS (hasUnseen: true)
+    const feed = Object.values(groupedStoriesMap).sort((a, b) => {
+      if (currentUserId) {
+        if (a.userId === currentUserId) return -1;
+        if (b.userId === currentUserId) return 1;
+      }
+
+      if (a.hasUnseen === b.hasUnseen) return 0;
+      return a.hasUnseen ? -1 : 1;
+    });
 
     return res.status(200).json(feed);
   } catch (error) {

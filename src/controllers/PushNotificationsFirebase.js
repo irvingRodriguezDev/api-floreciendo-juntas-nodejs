@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const NotificationToken = require("../models/NotificationToken");
 
 // Controlador de /save-notification-token
@@ -14,7 +15,7 @@ const saveNotificationToken = async (req, res) => {
     await NotificationToken.destroy({
       where: {
         token,
-        userId: { [Sequelize.Op.ne]: userId },
+        userId: { [Op.ne]: userId },
       },
     });
 
