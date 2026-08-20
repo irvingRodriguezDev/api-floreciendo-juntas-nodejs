@@ -6,6 +6,10 @@ const {
   checkStreamIsLive,
   getStreamViewers,
 } = require("../services/awsIvsService");
+const {
+  cancelDisconnect,
+  scheduleDisconnect,
+} = require("../helpers/streamDisconnectManager");
 const { Op } = require("sequelize");
 const emitNotification = require("../helpers/emitNotification");
 const {
@@ -400,11 +404,39 @@ const handleIvsWebhook = async (req, res) => {
 const handleStreamStart = async ({ channelArn, streamId }) => {
   try {
     const now = nowCdmx();
+
+    // A) Si fue una reconexión dentro del Grace Period, cancelamos el timer de cierre
+    cancelDisconnect(channelArn);
+
+    // B) Buscar si la transmisión ya estaba activa (Caso: Reconexión de OBS)
+    let live = await Live.findOne({
+      where: {
+        aws_channel_arn: channelArn,
+        status: "live",
+      },
+    });
+
+    if (live) {
+      console.log(`🔄 Reconexión exitosa para Live #${live.id}`);
+      await live.update({ current_stream_id: streamId });
+
+      const io = getIO();
+      // Aseguramos que el poller siga corriendo
+      startPoller(io, live.id, channelArn);
+
+      // Avisar al frontend que la señal volvió
+      io.emit("live_reconnected", {
+        liveId: live.id,
+        status: "live",
+      });
+      return;
+    }
+
+    // C) Si es un inicio nuevo desde 'scheduled'
     const minTime = now.clone().subtract(30, "minutes").toDate();
     const maxTime = now.clone().add(15, "minutes").toDate();
 
-    // 1. Encontrar el Live programado más próximo al rango de tiempo
-    const live = await Live.findOne({
+    live = await Live.findOne({
       where: {
         aws_channel_arn: channelArn,
         status: "scheduled",
@@ -415,17 +447,14 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       order: [["start_time", "ASC"]],
     });
 
-    // Guard: si no existe o ya tiene un stream asignado, ignorar
     if (!live || live.current_stream_id) return;
 
-    // 2. Actualizar estado (atómico)
     await live.update({
       status: "live",
       stream_started_at: now.toDate(),
       current_stream_id: streamId,
     });
 
-    // 3. Emitir evento socket a todos los clientes conectados
     const io = getIO();
     io.emit("live_started", {
       liveId: live.id,
@@ -433,8 +462,6 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
       startedAt: now.toISOString(),
     });
 
-    // 4. Arrancar el poller de viewers para este live
-    //    A partir de aquí el servidor consulta IVS cada 15s y pushea a la sala
     startPoller(io, live.id, channelArn);
 
     // 5. Notificaciones push en segundo plano (fire & forget)
@@ -474,7 +501,7 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
               url: notifUrl,
               data: { liveId: live.id },
             })),
-            { returning: true },
+            { returning: true }
           );
 
           // 2. Emitir por Socket en tiempo real a los usuarios conectados
@@ -484,12 +511,12 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
 
           // 3. Recolectar tokens activos para Push (Firebase FCM)
           const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || []).map((t) => t.token),
+            (u.NotificationTokens || []).map((t) => t.token)
           );
 
           // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
           console.log(
-            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
+            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`
           );
 
           if (allTokens.length > 0) {
@@ -520,75 +547,85 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
 
 const handleStreamEnd = async ({ channelArn }) => {
   try {
-    const now = nowCdmx();
-
     const live = await Live.findOne({
-      where: {
-        aws_channel_arn: channelArn,
-        status: "live",
-      },
+      where: { aws_channel_arn: channelArn, status: "live" },
     });
 
     if (!live) {
-      console.warn("⚠️  No hay live activo para finalizar");
+      console.warn("⚠️ No hay live activo para procesar Stream End");
       return;
     }
 
-    // 1. Actualizar estado del live
-    await live.update({
-      status: "ended",
-      stream_ended_at: now.toDate(),
-      current_stream_id: null,
-    });
-
-    // 2. Detener el poller — ya no hay nada que consultar en IVS
-    stopPoller(live.id);
-
-    // 3. Emitir evento socket a todos los clientes
+    // Notificar al frontend inmediatamente que hay un microcorte/reconexión en proceso
     const io = getIO();
-    io.emit("live_ended", {
+    io.emit("live_reconnecting", {
       liveId: live.id,
-      endedAt: now.toISOString(),
+      message: "Se perdió la señal momentáneamente, intentando reconectar...",
     });
 
-    console.log(`📡 Socket live_ended emitido → live:${live.id}`);
-    console.log(`🔴 Live #${live.id} finalizado correctamente.`);
+    // Agendamos el cierre definitivo en 90 segundos si OBS no vuelve
+    scheduleDisconnect(
+      channelArn,
+      async () => {
+        const now = nowCdmx();
+        await live.update({
+          status: "ended",
+          stream_ended_at: now.toDate(),
+          current_stream_id: null,
+        });
+
+        stopPoller(live.id);
+
+        io.emit("live_ended", {
+          liveId: live.id,
+          endedAt: now.toISOString(),
+        });
+
+        console.log(
+          `🔴 Live #${live.id} finalizado tras expirar el Grace Period (30s).`
+        );
+      },
+      30000
+    ); // 30 segundos de tolerancia
   } catch (error) {
     console.error("❌ Error en handleStreamEnd:", error);
   }
 };
 
 const handleStreamFailure = async ({ channelArn, failedAt }) => {
+  // Mismo tratamiento con Grace Period para caídas de red bruscas
   try {
     const live = await Live.findOne({
-      where: {
-        aws_channel_arn: channelArn,
-        status: "live",
-      },
+      where: { aws_channel_arn: channelArn, status: "live" },
     });
 
-    if (!live) {
-      console.warn("⚠️  No hay live activo para marcar error");
-      return;
-    }
+    if (!live) return;
 
-    // Detener el poller también en caso de fallo
-    stopPoller(live.id);
-
-    await live.update({
-      status: "error",
-      stream_ended_at: failedAt,
-      current_stream_id: null,
-    });
-
-    // Notificar a los clientes que el stream falló
     const io = getIO();
-    io.emit("live_error", {
-      liveId: live.id,
-      failedAt,
-    });
+    io.emit("live_reconnecting", { liveId: live.id });
 
-    console.log(`⚠️  Live #${live.id} marcado como ERROR.`);
+    scheduleDisconnect(
+      channelArn,
+      async () => {
+        stopPoller(live.id);
+
+        await live.update({
+          status: "error",
+          stream_ended_at: failedAt,
+          current_stream_id: null,
+        });
+
+        io.emit("live_error", {
+          liveId: live.id,
+          failedAt,
+        });
+
+        console.log(
+          `⚠️ Live #${live.id} marcado como ERROR tras expirar Grace Period.`
+        );
+      },
+      60000
+    );
   } catch (error) {
     console.error("❌ Error en handleStreamFailure:", error);
   }

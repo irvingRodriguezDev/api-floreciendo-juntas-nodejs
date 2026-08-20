@@ -1,10 +1,10 @@
 // livePoller.js
 const { getStreamViewers } = require("./awsIvsService");
 
-const activePollers = new Map(); // liveId → intervalId
+const activePollers = new Map();
 
 const startPoller = (io, liveId, channelArn) => {
-  if (activePollers.has(liveId)) return; // ya hay uno corriendo
+  if (activePollers.has(liveId)) return;
 
   console.log(`▶️ Poller iniciado → live:${liveId}`);
 
@@ -12,7 +12,6 @@ const startPoller = (io, liveId, channelArn) => {
     const room = `live_${liveId}`;
     const roomClients = io.sockets.adapter.rooms.get(room);
 
-    // Si no hay nadie en la sala, no gastamos la llamada a IVS
     if (!roomClients || roomClients.size === 0) return;
 
     try {
@@ -25,12 +24,12 @@ const startPoller = (io, liveId, channelArn) => {
         health,
       });
 
-      // Si IVS dice que ya no está live, limpiamos
-      if (!isLive) stopPoller(liveId);
+      // ⚠️ ELIMINADO: No llamamos a stopPoller(liveId) si !isLive.
+      // Dejamos que el Grace Period del webhook controle el ciclo de vida del Poller.
     } catch (err) {
       console.error(`❌ Poller error live:${liveId}`, err.message);
     }
-  }, 15000); // cada 15s — IVS actualiza aprox cada 5-10s de todas formas
+  }, 90000);
 
   activePollers.set(liveId, intervalId);
 };
