@@ -1,22 +1,13 @@
 const { Op } = require("sequelize");
-const {
-  Story,
-  StoryView,
-  User,
-  NotificationToken,
-  Notifications,
-} = require("../models");
+const { Story, StoryView, User } = require("../models");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
-const emitNotification = require("../helpers/emitNotification");
-const {
-  sendPushNotificationMulticast,
-} = require("../services/sendPushNotification");
+const { sendNotificationToUsers } = require("../services/notificationService");
 
 // 1. Crear una nueva historia
 const createStory = async (req, res) => {
   try {
-    const userId = req.user.id; // Asumiendo middleware de autenticación (req.user)
+    const userId = req.user.id;
     const { caption } = req.body;
 
     if (!req.file) {
@@ -24,6 +15,7 @@ const createStory = async (req, res) => {
         .status(400)
         .json({ message: "Debes adjuntar una imagen para tu historia." });
     }
+
     let urlmedia;
     try {
       urlmedia = await uploadToS3("stories", req.file, crypto.randomUUID());
@@ -39,81 +31,42 @@ const createStory = async (req, res) => {
       userId,
       mediaUrl: urlmedia,
       caption: caption || null,
-      // expiresAt se calcula automáticamente por el defaultValue del modelo (+24 hrs)
     });
 
+    // Respuesta inmediata al cliente
     res.status(201).json({
       message: "Historia publicada con éxito",
       story: newStory,
     });
+
+    // Notificaciones en segundo plano
     (async () => {
       try {
-        const usersWithTokens = await User.findAll({
-          where: { roleId: 4, isSubscribed: true, id: { [Op.ne]: userId } },
+        // 1. Obtenemos únicamente los IDs de los destinatarios
+        const subscribers = await User.findAll({
+          where: {
+            roleId: 4,
+            isSubscribed: true,
+            id: { [Op.ne]: userId },
+          },
           attributes: ["id"],
-          include: [
-            {
-              model: NotificationToken,
-              as: "NotificationTokens",
-              where: { isActive: true },
-              attributes: ["token"],
-              required: false,
-            },
-          ],
+          raw: true,
         });
-        if (usersWithTokens.length > 0) {
-          const notifTitle = "Nueva Historia 📸";
-          const notifBody = `${req.user.name} Agrego contenido a su historia`;
-          const notifUrl = `/comunidad`;
 
-          // 1. Crear las notificaciones en la DB en lote
-          const createdNotifications = await Notifications.bulkCreate(
-            usersWithTokens.map((u) => ({
-              userId: u.id,
-              actorId: userId,
-              type: "story",
-              entityId: newStory.id,
-              title: notifTitle,
-              body: notifBody,
-              url: notifUrl,
-              data: { storyId: newStory.id },
-            })),
-            { returning: true }
-          );
+        const recipientIds = subscribers.map((u) => u.id);
 
-          // 2. Emitir por Socket en tiempo real a los usuarios conectados
-          createdNotifications.forEach((notif) => {
-            emitNotification(notif.userId, notif);
+        if (recipientIds.length > 0) {
+          // 2. Transfiriendo toda la responsabilidad al helper centralizado
+          await sendNotificationToUsers({
+            recipientIds,
+            actorId: userId,
+            type: "story",
+            entityId: newStory.id,
+            title: "Nueva Historia 📸",
+            body: `${req.user.name} agregó contenido a su historia`,
+            url: "/comunidad",
+            extraData: { storyId: newStory.id },
           });
-
-          // 3. Recolectar tokens activos para Push (Firebase FCM)
-          const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || []).map((t) => t.token)
-          );
-
-          // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
-          console.log(
-            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`
-          );
-
-          if (allTokens.length > 0) {
-            // Enviar en lotes de 500 (límite de FCM Multicast)
-            for (let i = 0; i < allTokens.length; i += 500) {
-              const batch = allTokens.slice(i, i + 500);
-              await sendPushNotificationMulticast({
-                tokens: batch,
-                title: notifTitle,
-                body: notifBody,
-                data: {
-                  type: "story",
-                  storyId: String(newStory.id),
-                  url: notifUrl,
-                },
-              }).catch((err) => {
-                console.error("❌ Error enviando lote Push:", err);
-              });
-            }
-          }
         }
       } catch (err) {
         console.error("Error al enviar notificaciones Historias", err);

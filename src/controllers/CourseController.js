@@ -137,6 +137,7 @@ const getCourses = async (req, res) => {
           model: CourseVideo,
           as: "videos",
           where: { is_active: true },
+          required: false,
         },
         {
           model: CertificateCourse,

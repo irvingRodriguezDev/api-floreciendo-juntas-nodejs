@@ -67,7 +67,7 @@ const createEvent = async (req, res) => {
         totalTickets,
         price,
       },
-      { transaction: t },
+      { transaction: t }
     );
 
     // Si se envió archivo, subir a S3 ANTES de crear tickets
@@ -135,7 +135,7 @@ const createEvent = async (req, res) => {
               url: notifUrl,
               data: { eventId: event.id },
             })),
-            { returning: true }, // 💡 Importante para obtener los objetos creados
+            { returning: true } // 💡 Importante para obtener los objetos creados
           );
 
           // 🔥 2. EMITIR POR SOCKET A CADA USUARIO CONECTADO
@@ -146,7 +146,7 @@ const createEvent = async (req, res) => {
 
           // 3. Recolectar tokens para Push (Firebase)
           const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || []).map((t) => t.token),
+            (u.NotificationTokens || []).map((t) => t.token)
           );
 
           if (allTokens.length > 0) {
@@ -379,7 +379,7 @@ const updateEvent = async (req, res) => {
         .tz(
           `${startDate} ${timeToUse}`,
           "YYYY-MM-DD HH:mm",
-          "America/Mexico_City",
+          "America/Mexico_City"
         )
         .toDate();
     }
@@ -391,7 +391,7 @@ const updateEvent = async (req, res) => {
           .tz(
             `${endDate} ${timeToUse}`,
             "YYYY-MM-DD HH:mm",
-            "America/Mexico_City",
+            "America/Mexico_City"
           )
           .toDate();
       } else {
@@ -536,9 +536,9 @@ const buyTicket = async (req, res) => {
             buyerName,
             buyerEmail,
           },
-          { transaction: t },
-        ),
-      ),
+          { transaction: t }
+        )
+      )
     );
 
     // IDs como string separado por comas para la metadata de Stripe
@@ -684,9 +684,9 @@ const buyTicketOpen = async (req, res) => {
             buyerName,
             buyerEmail,
           },
-          { transaction: t },
-        ),
-      ),
+          { transaction: t }
+        )
+      )
     );
 
     // IDs como string separado por comas para la metadata de Stripe
@@ -826,7 +826,7 @@ const downloadIcsFile = async (req, res) => {
 
     // Generar contenido del archivo .ics
     const ticketUrl = getS3Url(
-      `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticketId}`,
+      `${process.env.AWS_S3_ENVIRONMENT}/tickets/${ticketId}`
     );
     const icsContent = generateICSFile(event, ticketUrl, ticketId);
 
@@ -834,7 +834,7 @@ const downloadIcsFile = async (req, res) => {
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${event.slug}.ics"`,
+      `attachment; filename="${event.slug}.ics"`
     );
 
     // Enviar el contenido

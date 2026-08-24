@@ -10,9 +10,8 @@ const { Upload } = require("@aws-sdk/lib-storage");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const CourseVideo = require("../models/CourseVideo");
 const sequelize = require("../config/db");
-const { User, Notifications, NotificationToken, Course } = require("../models");
-const sendPushNotification = require("../services/sendPushNotification");
-const emitNotification = require("../helpers/emitNotification");
+const { User, Course } = require("../models");
+const { sendNotificationToUsers } = require("../services/notificationService");
 const s3 = new S3Client({ region: "us-east-2" });
 const BUCKET_NAME = "floreciendo-videos-cursos";
 
@@ -40,7 +39,7 @@ const generatePresignedUrl = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores DEL CURSO
       await CourseVideo.update(
         { is_active: false },
-        { where: { courseId }, transaction: t },
+        { where: { courseId }, transaction: t }
       );
 
       // 2️⃣ Crear registro nuevo
@@ -52,7 +51,7 @@ const generatePresignedUrl = async (req, res) => {
           is_active: true,
           durationSeconds,
         },
-        { transaction: t },
+        { transaction: t }
       );
 
       // 3️⃣ Generar s3Key definitivo
@@ -129,80 +128,29 @@ const updateVideo = async (req, res) => {
     if (!wasReady && isReadyNow) {
       (async () => {
         try {
-          // 1. Buscar usuarios objetivo (rol 4, suscritos, excluyendo al creador)
-          const usersWithTokens = await User.findAll({
+          const subscribers = await User.findAll({
             where: {
               roleId: 4,
               isSubscribed: true,
             },
             attributes: ["id"],
-            include: [
-              {
-                model: NotificationToken,
-                as: "NotificationTokens",
-                // 💡 Quitamos la restricción de 'safari' para garantizar que llegue a iOS PWA
-                where: { isActive: true },
-                attributes: ["token"],
-                required: false, // Permite traer usuarios para notif en BD/Socket aunque no tengan Push Token
-              },
-            ],
+            raw: true,
           });
 
-          if (usersWithTokens.length > 0) {
-            const notifTitle = "🎬 ¡Nueva clase disponible!";
-            const notifBody = `Ya puedes ver el nuevo contenido de "${course.title}". ¡Entra ahora! `;
-            const notifUrl = `/detalle-curso/${video.courseId}`;
+          const recipientIds = subscribers.map((u) => u.id);
 
-            // 1. Crear las notificaciones en la DB en lote
-            const createdNotifications = await Notifications.bulkCreate(
-              usersWithTokens.map((u) => ({
-                userId: u.id,
-                actorId: null,
-                type: "course",
-                entityId: video.id,
-                title: notifTitle,
-                body: notifBody,
-                url: notifUrl,
-                data: { videoId: video.id, courseId: video.courseId },
-              })),
-              { returning: true },
-            );
-
-            // 2. Emitir por Socket en tiempo real a los usuarios conectados
-            createdNotifications.forEach((notif) => {
-              emitNotification(notif.userId, notif);
+          if (recipientIds.length > 0) {
+            // 2. El helper se encarga de BD, WebSockets, buscar Tokens FCM y lotes de 500
+            await sendNotificationToUsers({
+              recipientIds,
+              actorId: null,
+              type: "course",
+              entityId: video.id,
+              title: "🎬 ¡Nueva clase disponible!",
+              body: `Ya puedes ver el nuevo contenido de "${course.title}". ¡Entra ahora!`,
+              url: `/detalle-curso/${video.courseId}`,
+              extraData: { videoId: video.id, courseId: video.courseId },
             });
-
-            // 3. Recolectar tokens activos para Push (Firebase FCM)
-            const allTokens = usersWithTokens.flatMap((u) =>
-              (u.NotificationTokens || []).map((t) => t.token),
-            );
-
-            // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
-            console.log(
-              `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
-            );
-
-            if (allTokens.length > 0) {
-              // Enviar en lotes de 500 (límite de FCM Multicast)
-              for (let i = 0; i < allTokens.length; i += 500) {
-                const batch = allTokens.slice(i, i + 500);
-                await sendPushNotification
-                  .sendPushNotificationMulticast({
-                    tokens: batch,
-                    title: notifTitle,
-                    body: notifBody,
-                    data: {
-                      type: "course",
-                      postId: String(video.id),
-                      url: notifUrl,
-                    },
-                  })
-                  .catch((err) => {
-                    console.error("❌ Error enviando lote Push:", err);
-                  });
-              }
-            }
           }
         } catch (err) {
           console.error("❌ Error en Notificaciones de video publicado:", err);
@@ -238,7 +186,7 @@ const initMultipartUpload = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores
       await CourseVideo.update(
         { is_active: true },
-        { where: { courseId }, transaction: t },
+        { where: { courseId }, transaction: t }
       );
 
       // 2️⃣ Crear registro del video (🔥 IGUAL QUE ANTES)
@@ -252,7 +200,7 @@ const initMultipartUpload = async (req, res) => {
           title,
           order,
         },
-        { transaction: t },
+        { transaction: t }
       );
 
       // 3️⃣ Generar s3Key (🔥 INCLUYE video.id)
@@ -276,7 +224,7 @@ const initMultipartUpload = async (req, res) => {
     // (opcional) guardar uploadId
     await CourseVideo.update(
       { uploadId: UploadId },
-      { where: { id: result.videoId } },
+      { where: { id: result.videoId } }
     );
 
     return res.json({
@@ -331,7 +279,7 @@ const completeMultipartUpload = async (req, res) => {
 
     await CourseVideo.update(
       { status: "subiendo" },
-      { where: { id: videoId } },
+      { where: { id: videoId } }
     );
 
     res.json({ success: true });

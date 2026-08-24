@@ -1,24 +1,13 @@
 const { Op } = require("sequelize");
 const dayjs = require("dayjs");
-const {
-  Conversation,
-  Message,
-  User,
-  Notifications,
-  NotificationToken,
-} = require("../models");
+const { Conversation, Message, User } = require("../models");
+const { sendNotificationToUsers } = require("../services/notificationService");
 // Reemplaza por la ruta de tu servicio de Firebase FCM si ya lo tienes configurado
-const {
-  sendPushNotification,
-  sendPushNotificationMulticast,
-} = require("../services/sendPushNotification");
-const emitNotification = require("../helpers/emitNotification");
 
 const sendBirthdayWish = async (req, res) => {
   try {
     const senderId = req.user.id;
     const userSender = req.user.nombre || req.user.name || "Una usuaria";
-    // 🔑 Recibimos opcionalmente el 'type' del body para saber si es de cumple o un chat normal
     const { receiverId, messageText, type = "DIRECT_MESSAGE" } = req.body;
 
     if (!receiverId || !messageText) {
@@ -57,7 +46,7 @@ const sendBirthdayWish = async (req, res) => {
       });
     }
 
-    // B. Crear el mensaje con su tipo correspondiente
+    // B. Crear el mensaje
     const messageType = type === "BIRTHDAY_WISH" ? "BIRTHDAY_WISH" : "TEXT";
 
     const newMessage = await Message.create({
@@ -69,18 +58,18 @@ const sendBirthdayWish = async (req, res) => {
       read: false,
     });
 
-    // C. Notificación Push y WebSockets en segundo plano (Async IIFE)
+    // C. Notificación en segundo plano usando el helper centralizado
     (async () => {
       try {
-        // 🔑 1. Títulos y textos dinámicos según el origen
         const isBirthday = type === "BIRTHDAY_WISH";
 
+        // 1. Títulos y cuerpos dinámicos
         const notifTitle = isBirthday
           ? "🥳 ¡Te han felicitado por tu cumpleaños! 🥳"
           : type === "REPLY_STORY"
-            ? ` ${userSender} respondio tu historia`
+            ? `${userSender} respondió tu historia`
             : type === "REACTION_STORY"
-              ? `${userSender} Reacciono a tu historia`
+              ? `${userSender} reaccionó a tu historia`
               : `💬 Nuevo mensaje de ${userSender}`;
 
         const notifBody = isBirthday
@@ -89,47 +78,22 @@ const sendBirthdayWish = async (req, res) => {
             ? `${messageText.substring(0, 60)}...`
             : messageText;
 
-        // 🔑 2. Crear notificación interna asignada al RECEPTOR (receiverId)
-        const notification = await Notifications.create({
-          userId: receiverId, // 👈 Se le guarda en la bandeja a quien recibe
-          actorId: senderId, // 👈 Quien realizó la acción
-          type: isBirthday ? "birthday_wish" : "direct_message",
+        const notifType = isBirthday ? "birthday_wish" : "direct_message";
+
+        // 2. Llamada única al helper (BD + Socket + FCM Tokens + Push Multicast)
+        await sendNotificationToUsers({
+          recipientIds: receiverId,
+          actorId: senderId,
+          type: notifType,
+          entityId: newMessage.id,
           title: notifTitle,
           body: notifBody,
-          data: { senderId, conversationId: conversation.id },
-        });
-
-        // 🔑 3. Emitir WebSocket en tiempo real al RECEPTOR
-        if (typeof emitNotification === "function") {
-          emitNotification(receiverId, notification); // 👈 Asignado a receiverId
-        }
-
-        // 🔑 4. Buscar tokens de FCM del DESTINATARIO (receiverId)
-        const tokenRows = await NotificationToken.findAll({
-          where: {
-            userId: receiverId, // 👈 Corregido: Buscamos tokens de la receptora
-            isActive: true,
+          url: `/mensajes/${conversation.id}`, // Opcional: ruta para abrir directamente el chat
+          extraData: {
+            senderId,
+            conversationId: conversation.id,
           },
-          attributes: ["token"],
         });
-
-        if (tokenRows.length > 0) {
-          const tokens = tokenRows.map((t) => t.token);
-
-          // 🔑 5. Enviar Push Nativo vía FCM Multicast
-          await sendPushNotificationMulticast({
-            tokens,
-            title: notifTitle,
-            body: notifBody,
-            data: {
-              type: isBirthday ? "birthday_wish" : "direct_message",
-              conversationId: String(conversation.id),
-              senderId: String(senderId),
-            },
-          }).catch((pushErr) =>
-            console.error("❌ Error en Push FCM de mensajería:", pushErr)
-          );
-        }
       } catch (err) {
         console.error("❌ Error enviando notificación de mensaje:", err);
       }

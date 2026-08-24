@@ -1,14 +1,6 @@
 // controllers/post.controller.js
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
-const {
-  Post,
-  PostComment,
-  PostMedia,
-  PostLike,
-  User,
-  NotificationToken,
-  Notifications,
-} = require("../models");
+const { Post, PostComment, PostMedia, PostLike, User } = require("../models");
 const getS3Url = require("../helpers/getS3Url");
 const sequelize = require("../config/db");
 const { getIO } = require("../socket");
@@ -16,11 +8,8 @@ const convertImageIfNeeded = require("../helpers/convertImages");
 const deleteFromS3 = require("../helpers/deleteFromS3");
 const { Op } = require("sequelize");
 const { addPoints } = require("../utils/addPoints");
-const {
-  sendPushNotificationMulticast,
-} = require("../services/sendPushNotification");
-const emitNotification = require("../helpers/emitNotification");
 const moment = require("moment-timezone");
+const { sendNotificationToUsers } = require("../services/notificationService");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
   "image/jpeg",
@@ -112,7 +101,7 @@ const createPost = async (req, res) => {
             pinnedUntil: expiryDate,
             type: type,
           },
-          { transaction: t },
+          { transaction: t }
         );
 
         // B. Sumar puntos
@@ -122,7 +111,7 @@ const createPost = async (req, res) => {
           "post_created",
           post.id,
           "Publicó un post",
-          t,
+          t
         );
 
         // C. Crear media con URLs reales
@@ -139,7 +128,7 @@ const createPost = async (req, res) => {
         }
 
         return { post, createdMedia };
-      }),
+      })
     );
 
     const { post, createdMedia } = result;
@@ -171,71 +160,31 @@ const createPost = async (req, res) => {
     // Esto ya no le importa al usuario esperar, pero debe ejecutarse
     (async () => {
       try {
-        // 1. Buscar usuarios objetivo (rol 4, suscritos, excluyendo al creador)
-        const usersWithTokens = await User.findAll({
-          where: { roleId: 4, isSubscribed: true, id: { [Op.ne]: userId } },
+        // 1. Solo obtenemos los IDs de los usuarios elegibles (rol 4, suscritos, excluyendo al creador)
+        const subscribers = await User.findAll({
+          where: {
+            roleId: 4,
+            isSubscribed: true,
+            id: { [Op.ne]: userId },
+          },
           attributes: ["id"],
-          include: [
-            {
-              model: NotificationToken,
-              as: "NotificationTokens",
-              // 💡 Quitamos la restricción de 'safari' para garantizar que llegue a iOS PWA
-              where: { isActive: true },
-              attributes: ["token"],
-              required: false, // Permite traer usuarios para notif en BD/Socket aunque no tengan Push Token
-            },
-          ],
+          raw: true,
         });
 
-        if (usersWithTokens.length > 0) {
-          const notifTitle = "Nuevo post 🌸";
-          const notifBody = `${req.user.name} publicó un nuevo post`;
-          const notifUrl = `/comunidad/${post.id}`;
+        const recipientIds = subscribers.map((u) => u.id);
 
-          // 1. Crear las notificaciones en la DB en lote
-          const createdNotifications = await Notifications.bulkCreate(
-            usersWithTokens.map((u) => ({
-              userId: u.id,
-              actorId: userId,
-              type: "post",
-              entityId: post.id,
-              title: notifTitle,
-              body: notifBody,
-              url: notifUrl,
-              data: { postId: post.id },
-            })),
-            { returning: true },
-          );
-
-          // 2. Emitir por Socket en tiempo real a los usuarios conectados
-          createdNotifications.forEach((notif) => {
-            emitNotification(notif.userId, notif);
+        if (recipientIds.length > 0) {
+          // 2. El helper se encarga de BD, WebSockets, buscar Tokens FCM y lotes de 500
+          await sendNotificationToUsers({
+            recipientIds,
+            actorId: userId,
+            type: "post",
+            entityId: post.id,
+            title: "Nuevo post 🌸",
+            body: `${req.user.name} publicó un nuevo post`,
+            url: `/comunidad/${post.id}`,
+            extraData: { postId: post.id },
           });
-
-          // 3. Recolectar tokens activos para Push (Firebase FCM)
-          const allTokens = usersWithTokens.flatMap((u) =>
-            (u.NotificationTokens || []).map((t) => t.token),
-          );
-
-          // 🔍 LOG DE DEPURACIÓN (Útil para validar en consola local)
-          console.log(
-            `🚀 Intentando enviar Push a ${allTokens.length} dispositivo(s)...`,
-          );
-
-          if (allTokens.length > 0) {
-            // Enviar en lotes de 500 (límite de FCM Multicast)
-            for (let i = 0; i < allTokens.length; i += 500) {
-              const batch = allTokens.slice(i, i + 500);
-              await sendPushNotificationMulticast({
-                tokens: batch,
-                title: notifTitle,
-                body: notifBody,
-                data: { type: "post", postId: String(post.id), url: notifUrl },
-              }).catch((err) => {
-                console.error("❌ Error enviando lote Push:", err);
-              });
-            }
-          }
         }
       } catch (err) {
         console.error("❌ Error en Notificaciones Post:", err);
@@ -438,7 +387,7 @@ const toggleLike = async (req, res) => {
 
       // Puntos fuera de transacción principal (opcional, pero recomendado)
       addPoints(userId, 10, "reaction", postId, "Reaccionó a un post").catch(
-        () => {},
+        () => {}
       );
       liked = true;
     }
@@ -454,50 +403,19 @@ const toggleLike = async (req, res) => {
     if (liked && post.userId !== userId) {
       (async () => {
         try {
-          const notifTitle = "Nueva reacción ❤️";
-          const notifBody = `${userName} reaccionó a tu publicación`;
-          const notifUrl = `/comunidad/${postId}`;
+          // Evitamos notificar si el usuario reacciona a su propio post
+          if (post.userId === userId) return;
 
-          // 1. Guardar en historial (DB)
-          const notification = await Notifications.create({
-            userId: post.userId,
+          await sendNotificationToUsers({
+            recipientIds: post.userId,
             actorId: userId,
             type: "like",
-            title: notifTitle,
-            body: notifBody,
-            url: notifUrl,
-            data: { postId },
+            entityId: postId,
+            title: "Nueva reacción ❤️",
+            body: `${userName} reaccionó a tu publicación`,
+            url: `/comunidad/${postId}`,
+            extraData: { postId },
           });
-
-          // 2. Emitir por Socket en tiempo real
-          emitNotification(post.userId, notification);
-
-          // 3. Buscar tokens activos del dueño del post
-          const tokenRows = await NotificationToken.findAll({
-            where: {
-              userId: post.userId,
-              isActive: true,
-            },
-            attributes: ["token"],
-          });
-
-          if (tokenRows.length > 0) {
-            const tokens = tokenRows.map((t) => t.token);
-
-            // 4. Enviar Push Nativo vía FCM Multicast
-            await sendPushNotificationMulticast({
-              tokens,
-              title: notifTitle,
-              body: notifBody,
-              data: {
-                type: "like",
-                postId: String(postId),
-                url: notifUrl,
-              },
-            }).catch((pushErr) =>
-              console.error("❌ Error en Push Like:", pushErr),
-            );
-          }
         } catch (err) {
           console.error("❌ Error notificación like:", err);
         }
@@ -516,7 +434,7 @@ const addComment = async (req, res) => {
   const files = req.files || [];
 
   try {
-    /* 1. VALIDACIONES Y PREPARACIÓN (Fuera de la DB) */
+    /* 1. VALIDACIONES Y PREPARACIÓN */
     const { content } = req.body;
 
     for (const file of files) {
@@ -529,23 +447,30 @@ const addComment = async (req, res) => {
 
     const [user, post] = await Promise.all([
       User.findByPk(userId, { attributes: ["id", "name", "profileImage"] }),
-      Post.findByPk(postId, { attributes: ["id", "userId"] }),
+      Post.findByPk(postId, {
+        attributes: ["id", "userId", "title"],
+        include: [
+          {
+            model: User,
+            as: "user",
+            attributes: ["id", "name"],
+          },
+        ],
+      }),
     ]);
 
     if (!post) return res.status(404).json({ message: "Post no encontrado" });
 
-    /* 2. TRABAJO PESADO (S3) ANTES DE LA TRANSACCIÓN 🔥 */
-    // Subimos todo a S3 primero. Si esto falla, la DB ni se entera.
+    /* 2. TRABAJO PESADO (S3) */
     const mediaToCreate = await Promise.all(
       files.map(async (file, i) => {
         const isVideo = file.mimetype.startsWith("video");
         const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
         const uniqueId = crypto.randomUUID();
-        // El tercer parámetro (id) no lo tenemos aún, así que uploadToS3 debe manejar un nombre único
         const finalPath = await uploadToS3(
           "comment-media",
           mediaFile,
-          uniqueId,
+          uniqueId
         );
         uploadedFiles.push(finalPath);
 
@@ -555,28 +480,25 @@ const addComment = async (req, res) => {
           order: i,
           url: finalPath,
         };
-      }),
+      })
     );
 
-    /* 3. TRANSACCIÓN EXPRESS (Solo escrituras rápidas) ⚡ */
+    /* 3. TRANSACCIÓN EXPRESS */
     const fullComment = await sequelize.transaction(async (t) => {
-      // Crear comentario
       const comment = await PostComment.create(
-        { postId, userId, content: content },
-        { transaction: t },
+        { postId, userId, content },
+        { transaction: t }
       );
 
-      // Puntos
       await addPoints(
         userId,
         20,
         "comment_created",
         comment.id,
         "Comentó un post",
-        t,
+        t
       );
 
-      // Crear Media con URLs reales
       let createdMedia = [];
       if (mediaToCreate.length > 0) {
         const mediaWithId = mediaToCreate.map((m) => ({
@@ -589,17 +511,14 @@ const addComment = async (req, res) => {
         });
       }
 
-      // Devolvemos el objeto construido manualmente para evitar OTRA query (findByPk)
-
-      // Esto ahorra aún más tiempo de conexión
       return {
         ...comment.get({ clone: true }),
-        user: user,
+        user,
         media: createdMedia,
       };
     });
 
-    /* 4. FORMATEO DE RESPUESTA */
+    /* 4. FORMATEO Y RESPUESTA INMEDIATA */
     const response = {
       ...fullComment,
       user: {
@@ -607,74 +526,79 @@ const addComment = async (req, res) => {
         name: user.name,
         profileImage: user.profileImage ? getS3Url(user.profileImage) : null,
       },
-      media: (fullComment.media || []).map((m) => ({
-        ...m.get(),
-        url: getS3Url(m.url),
-      })),
+      media: (fullComment.media || []).map((m) => {
+        const item = typeof m.get === "function" ? m.get() : m;
+        return {
+          ...item,
+          url: getS3Url(item.url),
+        };
+      }),
     };
+
     getIO().emit("createCommentPostCommunity", {
       postId,
       comment: response,
-      userId, // A veces el frontend usa esto para scroll automático
+      userId,
     });
-    // Respuesta inmediata con todo listo
+
     res.json({ success: true, data: response });
 
-    /* 5. BACKGROUND (Notificaciones y Sockets) */
+    /* 5. BACKGROUND (Notificaciones al Dueño y a Participantes) */
     (async () => {
       try {
-        if (post.userId !== userId) {
-          const notifTitle = "Nuevo comentario 💬";
-          const notifBody = `${user.name} comentó tu publicación`;
-          const notifUrl = `/comunidad/${postId}`;
+        const notifUrl = `/comunidad/${postId}`;
+        const extraData = { postId, commentId: fullComment.id };
 
-          // 1. Guardar en BD para el centro de notificaciones
-          const notification = await Notifications.create({
-            userId: post.userId,
+        // A. NOTIFICACIÓN AL DUEÑO DEL POST
+        if (post.userId !== userId) {
+          await sendNotificationToUsers({
+            recipientIds: post.userId,
             actorId: userId,
             type: "comment",
             entityId: fullComment.id,
-            title: notifTitle,
-            body: notifBody,
+            title: "Nuevo comentario 💬",
+            body: `${user.name} comentó tu publicación`,
             url: notifUrl,
-            data: { postId, commentId: fullComment.id },
+            extraData,
           });
+        }
 
-          // 2. Emitir por Socket en tiempo real
-          emitNotification(post.userId, notification);
-
-          // 3. Buscar tokens activos de FCM
-          const tokens = await NotificationToken.findAll({
-            where: {
-              userId: post.userId,
-              isActive: true,
+        // B. NOTIFICACIÓN A OTROS PARTICIPANTES (Hilo de la conversación)
+        const previousCommenters = await PostComment.findAll({
+          where: {
+            postId: postId,
+            userId: {
+              [Op.ne]: userId,
+              [Op.ne]: post.userId,
             },
-            attributes: ["token"],
-          });
+          },
+          attributes: [
+            [sequelize.fn("DISTINCT", sequelize.col("userId")), "userId"],
+          ],
+          raw: true,
+        });
 
-          if (tokens.length > 0) {
-            // 4. Enviar notificación Push nativa vía FCM Multicast
-            await sendPushNotificationMulticast({
-              tokens: tokens.map((t) => t.token),
-              title: notifTitle, // 👈 Usamos la misma variable para consistencia
-              body: notifBody,
-              data: {
-                type: "comment",
-                postId: String(postId),
-                commentId: String(fullComment.id), // 💡 Útil si quieres hacer scroll al comentario en el cliente
-                url: notifUrl,
-              },
-            }).catch((err) =>
-              console.error("⚠️ Multicast error en comentario:", err),
-            );
-          }
+        const participantIds = previousCommenters.map((c) => c.userId);
+
+        if (participantIds.length > 0) {
+          const postOwnerName = post.user?.name || "una publicación";
+
+          await sendNotificationToUsers({
+            recipientIds: participantIds,
+            actorId: userId,
+            type: "comment",
+            entityId: fullComment.id,
+            title: "Nuevo comentario en una conversación 💬",
+            body: `${user.name} también comentó la publicación de ${postOwnerName}`,
+            url: notifUrl,
+            extraData,
+          });
         }
       } catch (err) {
         console.error("⚠️ Error background addComment:", err);
       }
     })();
   } catch (error) {
-    // Si algo falló en la DB, borramos los archivos que ya subimos a S3
     for (const path of uploadedFiles) {
       try {
         await deleteFromS3(path);
@@ -684,6 +608,7 @@ const addComment = async (req, res) => {
     if (!res.headersSent) res.status(500).json({ message: error.message });
   }
 };
+
 const ShowOnePostById = async (req, res) => {
   try {
     const { postId } = req.params;
