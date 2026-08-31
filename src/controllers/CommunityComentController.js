@@ -41,17 +41,17 @@ const createComment = async (req, res) => {
         content,
         attachments: null,
       },
-      { transaction: t }
+      { transaction: t },
     );
 
     // 2️⃣ Sumar puntos (MISMA transacción 🔥)
     await addPoints(
       userId,
-      20,
-      "comment_created",
+      25,
+      "custom",
       newComment.id,
-      "Comentó un post",
-      t
+      `Realizo un comentario a un post de un curso, el post de curso: ${postId}`,
+      t,
     );
 
     // 3️⃣ Commit
@@ -64,7 +64,7 @@ const createComment = async (req, res) => {
       const attachments = await uploadToS3(
         "comments",
         req.files,
-        newComment.id
+        newComment.id,
       );
       newComment.attachments = attachments;
       await newComment.save(); // fuera de t
@@ -160,7 +160,7 @@ const updateComment = async (req, res) => {
 
     await comment.update(
       { content: content ?? comment.content, attachments },
-      { transaction: t }
+      { transaction: t },
     );
     await t.commit();
 

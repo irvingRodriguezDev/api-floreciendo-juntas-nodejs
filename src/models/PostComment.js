@@ -1,6 +1,6 @@
-// models/Comment.js
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
+
 const PostComment = sequelize.define(
   "Comment",
   {
@@ -17,6 +17,22 @@ const PostComment = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: false,
     },
+    // NULL = Comentario principal (raíz) | INT = Respuesta a otro comentario
+    parentId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      references: {
+        model: "comments",
+        key: "id",
+      },
+    },
+    // Opcional: ID del usuario al que se le responde dentro de un hilo (@Mención)
+    replyToUserId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+    },
     content: {
       type: DataTypes.TEXT,
       allowNull: true,
@@ -29,6 +45,7 @@ const PostComment = sequelize.define(
   {
     tableName: "comments",
     timestamps: true,
+    indexes: [{ fields: ["postId"] }, { fields: ["parentId"] }],
   },
 );
 

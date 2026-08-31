@@ -17,5 +17,10 @@ router.post(
   postController.addComment,
 );
 router.post("/:id/reaction", authMiddleware, postController.toggleLike);
+router.post(
+  "/comments/:commentId/reaction",
+  authMiddleware,
+  postController.toggleCommentLike,
+);
 router.get("/:postId/show", authMiddleware, postController.ShowOnePostById);
 module.exports = router;

@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const dayjs = require("dayjs");
 const { Conversation, Message, User } = require("../models");
 const { sendNotificationToUsers } = require("../services/notificationService");
+const getS3Url = require("../helpers/getS3Url");
 // Reemplaza por la ruta de tu servicio de Firebase FCM si ya lo tienes configurado
 
 const sendBirthdayWish = async (req, res) => {
@@ -119,7 +120,7 @@ const sendBirthdayWish = async (req, res) => {
  */
 const getConversations = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = Number(req.user.id);
 
     const conversations = await Conversation.findAll({
       where: {
@@ -136,19 +137,69 @@ const getConversations = async (req, res) => {
           as: "receiver",
           attributes: ["id", "name", "profileImage"],
         },
+        {
+          model: Message,
+          as: "messages",
+          attributes: ["id", "body", "type", "read", "senderId", "createdAt"],
+          separate: true,
+          limit: 1,
+          order: [["createdAt", "DESC"]],
+        },
       ],
       order: [["lastMessageAt", "DESC"]],
     });
 
-    // Formatear la conversación para que el "otro usuario" siempre sea fácil de identificar
     const formattedConversations = conversations.map((conv) => {
-      const otherUser = conv.senderId === userId ? conv.receiver : conv.sender;
+      // 1. Identificar el otro usuario del chat
+      const otherUserRaw =
+        conv.senderId === userId ? conv.receiver : conv.sender;
+      const otherUser = otherUserRaw
+        ? {
+            id: otherUserRaw.id,
+            name: otherUserRaw.name,
+            profileImage: otherUserRaw.profileImage
+              ? getS3Url(otherUserRaw.profileImage)
+              : null,
+          }
+        : null;
+
+      // 2. Extraer el último mensaje
+      const lastMessage = conv.messages?.[0];
+
+      // 3. Determinar el estado exacto tipo WhatsApp
+      let status = "empty"; // 'unread_incoming' | 'read_incoming' | 'sent_unread' | 'sent_read' | 'empty'
+      let isUnread = false;
+
+      if (lastMessage) {
+        const isSentByMe = Number(lastMessage.senderId) === userId;
+
+        if (isSentByMe) {
+          // El último mensaje lo envié YO
+          status = lastMessage.read ? "sent_read" : "sent_unread";
+        } else {
+          // El último mensaje lo envió EL OTRO
+          status = lastMessage.read ? "read_incoming" : "unread_incoming";
+          isUnread = !lastMessage.read; // Flag para activar el badge/resaltado rosa
+        }
+      }
 
       return {
         id: conv.id,
-        lastMessage: conv.lastMessage,
-        lastMessageAt: conv.lastMessageAt,
+        lastMessageAt: conv.lastMessageAt || lastMessage?.createdAt,
         otherUser,
+        lastMessage: lastMessage
+          ? {
+              id: lastMessage.id,
+              body: lastMessage.body,
+              type: lastMessage.type,
+              createdAt: lastMessage.createdAt,
+              read: lastMessage.read,
+              senderId: lastMessage.senderId,
+            }
+          : null,
+        // Datos formateados para la UI:
+        status, // Describe exactamente la combinación visual
+        isUnread, // true si hay un mensaje entrante que YO no he leído
       };
     });
 
@@ -226,7 +277,7 @@ const markAsRead = async (req, res) => {
           receiverId: userId,
           read: false,
         },
-      }
+      },
     );
 
     return res.status(200).json({ message: "Mensajes marcados como leídos." });

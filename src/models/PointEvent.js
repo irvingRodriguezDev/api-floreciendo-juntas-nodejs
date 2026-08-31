@@ -28,7 +28,7 @@ const PointEvent = sequelize.define(
         "comment_created",
         "reaction",
         "login_streak",
-        "custom"
+        "custom",
       ),
       allowNull: false,
     },
@@ -47,7 +47,7 @@ const PointEvent = sequelize.define(
     tableName: "point_events",
     timestamps: true,
     underscored: true,
-  }
+  },
 );
 
 module.exports = PointEvent;

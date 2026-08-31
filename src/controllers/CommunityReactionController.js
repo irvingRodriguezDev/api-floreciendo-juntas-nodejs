@@ -56,10 +56,10 @@ const toggleReaction = async (req, res) => {
     // -------- PUNTOS (IDEMPOTENTE) --------
     await addPoints(
       userId,
-      10,
-      "reaction",
+      15,
+      "custom",
       `${postId}`, // 🔒 CLAVE
-      "Reaccionó a un post",
+      `El usuario ${userId} ha reaccionado a una publicacion en un curso`,
       t,
     );
 

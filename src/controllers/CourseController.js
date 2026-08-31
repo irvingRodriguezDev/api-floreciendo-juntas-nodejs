@@ -427,19 +427,13 @@ const getCoursesBySystem = async (req, res) => {
 //topcursos
 const getTopViewedCourses = async (req, res) => {
   try {
-    // 1. Obtener top 10 courseIds con su conteo — query limpia sin includes
+    const { userId } = req.query;
+
+    // 1. Obtener los 10 courseId con más registros de interacción/progreso
     const topRaw = await CourseProgress.findAll({
       attributes: [
         "courseId",
-        [Sequelize.fn("COUNT", Sequelize.col("userId")), "viewsCount"],
-      ],
-      include: [
-        {
-          model: Course,
-          as: "course",
-          attributes: ["id", "title", "isActive"],
-          where: { isActive: true },
-        },
+        [Sequelize.fn("COUNT", Sequelize.col("id")), "viewsCount"],
       ],
       group: ["courseId"],
       order: [[Sequelize.literal("viewsCount"), "DESC"]],
@@ -451,43 +445,68 @@ const getTopViewedCourses = async (req, res) => {
 
     const courseIds = topRaw.map((r) => r.courseId);
 
-    // 2. Traer los datos completos de esos cursos
+    // 2. Definir los includes para traer los datos completos del curso
+    const includes = [
+      {
+        model: ImageCourses,
+        as: "images",
+        attributes: ["s3_key"],
+        where: { is_active: true },
+        required: false,
+      },
+      {
+        model: CourseVideo,
+        as: "videos",
+        attributes: ["id"], // Solo requerimos la lista para contar
+        required: false,
+      },
+    ];
+
+    // Si viene userId, incluir solo su progreso en particular
+
+    if (userId) {
+      includes.push({
+        model: CourseProgress,
+        as: "progresses",
+        where: { userId: Number(userId) },
+        required: false, // LEFT JOIN para no excluir cursos si no hay registro aún
+        attributes: ["percent"],
+      });
+    }
+
+    // 3. Traer la información detallada de los 10 cursos obtenidos
     const courses = await Course.findAll({
       where: { id: courseIds, isActive: true },
       attributes: ["id", "title", "description", "slug"],
-      include: [
-        {
-          model: ImageCourses,
-          as: "images",
-          attributes: ["s3_key"],
-          where: { is_active: true },
-          required: false,
-        },
-        {
-          model: CourseVideo,
-          as: "videos",
-          where: { courseId: courseIds },
-        },
-      ],
+      include: includes,
     });
-
-    // 3. Mapear respuesta respetando el orden original del ranking
+    // Map para rápido acceso por ID manteniendo el orden del ranking
     const courseMap = new Map(courses.map((c) => [c.id, c]));
 
-    const formatted = topRaw.map((row) => {
-      const course = courseMap.get(row.courseId);
-      const firstImage = course?.images?.[0];
+    // 4. Formatear la respuesta
+    const formatted = topRaw
+      .map((row) => {
+        const course = courseMap.get(row.courseId);
+        if (!course) return null; // Por si un curso quedó inactivo (isActive: false)
 
-      return {
-        courseId: row.courseId,
-        viewsCount: Number(row.viewsCount),
-        title: course?.title ?? null,
-        slug: course?.slug ?? null,
-        videosCount: course.videos.length,
-        description: course?.description ?? null,
-        cover_image_url: firstImage ? getS3Url(firstImage.s3_key) : null,
-      };
-    });
+        const firstImage = course.images?.[0];
+        const userProgress =
+          userId && course.progresses?.length > 0
+            ? Number(course.progresses[0].percent)
+            : 0;
+
+        return {
+          courseId: course.id,
+          viewsCount: Number(row.viewsCount),
+          title: course.title ?? null,
+          slug: course.slug ?? null,
+          videosCount: course.videos?.length || 0,
+          description: course.description ?? null,
+          cover_image_url: firstImage ? getS3Url(firstImage.s3_key) : null,
+          user_progress_percentage: userProgress,
+        };
+      })
+      .filter(Boolean); // Filtrar posibles nulos
 
     res.json(formatted);
   } catch (error) {
@@ -495,7 +514,6 @@ const getTopViewedCourses = async (req, res) => {
     res.status(500).json({ error: "Error al obtener top cursos más vistos" });
   }
 };
-
 // Obtener un curso por ID
 const getCourseById = async (req, res) => {
   try {
@@ -613,7 +631,7 @@ const updateCourse = async (req, res) => {
             course.images?.length > 0
               ? ImageCourses.update(
                   { is_active: false },
-                  { where: { courseId: id } }
+                  { where: { courseId: id } },
                 )
               : Promise.resolve(),
             uploadToS3("courses", imageFile, `img_${course.id}_${Date.now()}`),
@@ -625,13 +643,13 @@ const updateCourse = async (req, res) => {
             course.certificates?.length > 0
               ? CertificateCourse.update(
                   { is_active: false },
-                  { where: { courseId: id } }
+                  { where: { courseId: id } },
                 )
               : Promise.resolve(),
             uploadToS3(
               "certificates",
               certificateFile,
-              `cert_${course.id}_${Date.now()}`
+              `cert_${course.id}_${Date.now()}`,
             ),
           ]).then(([, key]) => key)
         : Promise.resolve(null),

@@ -150,7 +150,7 @@ const me = async (req, res) => {
 
     // 1. Buscamos primero si tiene alguna suscripción VÁLIDA (active o past_due)
     let activeSub = subscriptions.find((sub) =>
-      ["active", "past_due"].includes(sub.status),
+      ["active", "trialing", "past_due"].includes(sub.status),
     );
 
     // 2. Si no tiene activa/past_due, buscamos si tiene una 'canceled' que aún no vence (periodo pagado)
@@ -171,7 +171,7 @@ const me = async (req, res) => {
     let isSubscribed = false;
 
     if (currentSub) {
-      if (["active", "past_due"].includes(currentSub.status)) {
+      if (["active", "trialing", "past_due"].includes(currentSub.status)) {
         isSubscribed = true;
       } else if (currentSub.status === "canceled" && currentSub.end_date) {
         // Acceso permitido si canceló pero su periodo sigue vigente

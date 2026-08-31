@@ -81,11 +81,11 @@ const updateProgress = async (req, res) => {
           if (certificate_enabled) {
             await addPoints(
               userId,
-              10,
-              "course_completed",
+              100,
+              "custom",
               courseId,
-              "Completó el curso",
-              t
+              `El usuario con id: ${userId} ha cumpletado el curso con id: ${courseId}`,
+              t,
             );
           }
           result = userProgress;
@@ -104,7 +104,7 @@ const updateProgress = async (req, res) => {
           : Math.max(userProgress.percent || 0, percent);
         const newSeconds = Math.max(
           userProgress.lastWatchedSeconds || 0,
-          secondsWatched
+          secondsWatched,
         );
 
         userProgress.lastWatchedSeconds = newSeconds;
@@ -122,11 +122,11 @@ const updateProgress = async (req, res) => {
         if (shouldAddPoints) {
           await addPoints(
             userId,
-            10,
+            100,
             "course_completed",
             courseId,
             "Completó el curso",
-            t
+            t,
           );
         }
 
@@ -145,10 +145,10 @@ const updateProgress = async (req, res) => {
 
       if (isDeadlock && attempt < maxRetries) {
         console.warn(
-          `⚠️ Deadlock en updateProgress (intento ${attempt}/${maxRetries}). Reintentando...`
+          `⚠️ Deadlock en updateProgress (intento ${attempt}/${maxRetries}). Reintentando...`,
         );
         await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * 150 + 50)
+          setTimeout(resolve, Math.random() * 150 + 50),
         ); // Espera aleatoria de 50-200ms
       } else {
         console.error("updateProgress error fatal:", error);

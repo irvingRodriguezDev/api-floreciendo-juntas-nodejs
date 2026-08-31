@@ -36,7 +36,14 @@ const createPost = async (req, res) => {
     );
 
     // Asignación de puntos dentro de la misma transacción
-    await addPoints(userId, 25, "post_created", post.id, "Publicó un post", t);
+    await addPoints(
+      userId,
+      35,
+      "custom",
+      post.id,
+      `Realizo un comentario en el curso: ${courseId}`,
+      t,
+    );
 
     // Commit inmediato para liberar la conexión al pool
     await t.commit();
@@ -56,6 +63,7 @@ const createPost = async (req, res) => {
       const cleanUrl = attachmentUrl.replace(/^"|"$/g, "");
       await post.update({ attachments: cleanUrl });
     }
+    console.log("Este es el post en comentarios de curso");
 
     // Socket fuera de la transacción para no bloquear
     const io = socketModule.getIO();

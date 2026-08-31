@@ -54,6 +54,7 @@ const Conversation = require("./Conversation");
 const Message = require("./Message");
 const Story = require("./Story");
 const StoryView = require("./StoryView");
+const PostCommentLike = require("./PostCommentLike");
 
 // Registrar modelos
 const db = {
@@ -109,6 +110,7 @@ const db = {
   Message,
   Story,
   StoryView,
+  PostCommentLike,
 };
 
 // 🔹 Relaciones entre Role y User
@@ -208,7 +210,7 @@ User.hasMany(Post, {
 });
 
 // ==========================
-// Post ↔ Comments
+// Post ↔ Comments (Existente + Nuevas Respuestas)
 // ==========================
 Post.hasMany(PostComment, {
   foreignKey: "postId",
@@ -230,6 +232,23 @@ User.hasMany(PostComment, {
   as: "comments",
 });
 
+// ── NUEVO: Respuestas a Comentarios (Self-Referencing) ──
+PostComment.hasMany(PostComment, {
+  foreignKey: "parentId",
+  as: "replies",
+});
+
+PostComment.belongsTo(PostComment, {
+  foreignKey: "parentId",
+  as: "parent",
+});
+
+// ── NUEVO: Mención directa al responder (@Usuario) ──
+PostComment.belongsTo(User, {
+  foreignKey: "replyToUserId",
+  as: "replyToUser",
+});
+
 // ==========================
 // Post ↔ Likes
 // ==========================
@@ -247,6 +266,42 @@ PostLike.belongsTo(User, {
   foreignKey: "userId",
   as: "user",
 });
+
+// ==========================
+// NUEVO: Comment ↔ Likes
+// ==========================
+PostComment.hasMany(PostCommentLike, {
+  foreignKey: "commentId",
+  as: "post_comments_likes",
+});
+
+PostCommentLike.belongsTo(PostComment, {
+  foreignKey: "commentId",
+  as: "comment",
+});
+
+PostCommentLike.belongsTo(User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+// ==========================
+// Media (Post & Comment)
+// ==========================
+PostComment.hasMany(PostMedia, {
+  foreignKey: "modelId",
+  constraints: false,
+  scope: { modelType: "comment" },
+  as: "media_comment",
+});
+
+Post.hasMany(PostMedia, {
+  foreignKey: "modelId",
+  constraints: false,
+  scope: { modelType: "post" },
+  as: "media_post",
+});
+
 NotificationToken.belongsTo(User, {
   foreignKey: "userId",
   as: "user",

@@ -3,9 +3,14 @@ const { Story, StoryView, User } = require("../models");
 const { uploadToS3 } = require("../middlewares/uploadCourseImage");
 const getS3Url = require("../helpers/getS3Url");
 const { sendNotificationToUsers } = require("../services/notificationService");
+const { addPoints } = require("../utils/addPoints");
+const sequelize = require("../config/db");
 
 // 1. Crear una nueva historia
 const createStory = async (req, res) => {
+  // Guardamos la referencia de la imagen subida para limpiar S3 si falla la DB
+  let urlmedia = null;
+
   try {
     const userId = req.user.id;
     const { caption } = req.body;
@@ -16,7 +21,7 @@ const createStory = async (req, res) => {
         .json({ message: "Debes adjuntar una imagen para tu historia." });
     }
 
-    let urlmedia;
+    // 1. Subida a S3 (Fuera de la transacción de DB)
     try {
       urlmedia = await uploadToS3("stories", req.file, crypto.randomUUID());
     } catch (err) {
@@ -27,22 +32,53 @@ const createStory = async (req, res) => {
       });
     }
 
-    const newStory = await Story.create({
-      userId,
-      mediaUrl: urlmedia,
-      caption: caption || null,
-    });
+    // 2. Iniciamos la Transacción SQL
+    const t = await sequelize.transaction();
 
-    // Respuesta inmediata al cliente
+    let newStory;
+    try {
+      // Operación A: Crear historia
+      newStory = await Story.create(
+        {
+          userId,
+          mediaUrl: urlmedia,
+          caption: caption || null,
+        },
+        { transaction: t },
+      );
+
+      // Operación B: Otorgar puntos dentro de la misma transacción
+      await addPoints(
+        userId,
+        70,
+        "custom",
+        newStory.id,
+        `El usuario con Id: ${userId} ha subido contenido a su historia`,
+        t, // Se pasa la transacción al helper
+      );
+
+      // Si ambas operaciones salieron bien, confirmamos en DB
+      await t.commit();
+      console.log("Se creo la historia y se asignaron los puntos");
+    } catch (dbError) {
+      // Si algo falla al crear o dar puntos, revertimos la DB
+      await t.rollback();
+
+      // (Opcional recomendado): Borrar archivo de S3 si la DB falló
+      // await deleteFromS3(urlmedia);
+
+      throw dbError; // Mandamos al catch general para responder 500
+    }
+
+    // 3. Respuesta al cliente (Solo hasta que la DB confirmó todo)
     res.status(201).json({
       message: "Historia publicada con éxito",
       story: newStory,
     });
 
-    // Notificaciones en segundo plano
+    // 4. Notificaciones en segundo plano (Fuera del ciclo principal de res)
     (async () => {
       try {
-        // 1. Obtenemos únicamente los IDs de los destinatarios
         const subscribers = await User.findAll({
           where: {
             roleId: 4,
@@ -56,7 +92,6 @@ const createStory = async (req, res) => {
         const recipientIds = subscribers.map((u) => u.id);
 
         if (recipientIds.length > 0) {
-          // 2. Transfiriendo toda la responsabilidad al helper centralizado
           await sendNotificationToUsers({
             recipientIds,
             actorId: userId,
