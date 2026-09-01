@@ -35,7 +35,7 @@ const corsOptions = {
     "http://localhost:3000",
     "http://localhost:5173",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
-    "https://cam-consolidated-blogging-meat.trycloudflare.com",
+    "https://far-helen-unlike-testimony.trycloudflare.com",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

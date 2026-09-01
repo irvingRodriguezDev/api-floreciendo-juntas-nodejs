@@ -5,78 +5,108 @@ const getS3Url = require("../helpers/getS3Url");
 const { sendNotificationToUsers } = require("../services/notificationService");
 const { addPoints } = require("../utils/addPoints");
 const sequelize = require("../config/db");
+const convertImageIfNeeded = require("../helpers/convertImages");
+const ALLOWED_MIME_TYPES = [
+  // Imágenes
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
 
+  // Videos
+  "video/mp4",
+  "video/quicktime", // .mov (iPhone)
+];
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 50 MB
 // 1. Crear una nueva historia
 const createStory = async (req, res) => {
-  // Guardamos la referencia de la imagen subida para limpiar S3 si falla la DB
   let urlmedia = null;
+  let isVideo = false;
 
   try {
     const userId = req.user.id;
-    const { caption } = req.body;
+    const { caption, mediaType } = req.body;
+    console.log(caption, "el caption");
 
-    if (!req.file) {
+    const file = req.file;
+
+    if (!file) {
       return res
         .status(400)
-        .json({ message: "Debes adjuntar una imagen para tu historia." });
+        .json({ message: "Debes adjuntar un archivo para tu historia." });
     }
 
-    // 1. Subida a S3 (Fuera de la transacción de DB)
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      return res.status(400).json({
+        message: `Formato no soportado: ${file.originalname || file.mimetype}`,
+      });
+    }
+
+    // Validación de Tamaño según el tipo de archivo
+    isVideo = file.mimetype.startsWith("video");
+    const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+
+    if (file.size > maxSize) {
+      return res.status(400).json({
+        message: `El archivo supera el límite permitido (${isVideo ? "100MB" : "10MB"}).`,
+      });
+    }
+
+    // 1. Subida a S3
     try {
-      urlmedia = await uploadToS3("stories", req.file, crypto.randomUUID());
+      const mediaFile = isVideo ? file : await convertImageIfNeeded(file);
+      const uniqueId = crypto.randomUUID();
+
+      urlmedia = await uploadToS3("stories", mediaFile, uniqueId);
     } catch (err) {
-      console.error("Error subiendo historia a S3", err);
+      console.error("Error subiendo historia a S3:", err);
       return res.status(500).json({
-        message: "Error al subir el archivo multimedia",
+        message: "Error al subir el archivo multimedia a la nube.",
         error: err.message,
       });
     }
 
-    // 2. Iniciamos la Transacción SQL
+    // 2. Transacción SQL
     const t = await sequelize.transaction();
-
     let newStory;
+
     try {
-      // Operación A: Crear historia
       newStory = await Story.create(
         {
           userId,
           mediaUrl: urlmedia,
           caption: caption || null,
+          type: isVideo ? "video" : "image",
         },
         { transaction: t },
       );
 
-      // Operación B: Otorgar puntos dentro de la misma transacción
       await addPoints(
         userId,
         70,
         "custom",
         newStory.id,
         `El usuario con Id: ${userId} ha subido contenido a su historia`,
-        t, // Se pasa la transacción al helper
+        t,
       );
 
-      // Si ambas operaciones salieron bien, confirmamos en DB
       await t.commit();
-      console.log("Se creo la historia y se asignaron los puntos");
     } catch (dbError) {
-      // Si algo falla al crear o dar puntos, revertimos la DB
       await t.rollback();
-
-      // (Opcional recomendado): Borrar archivo de S3 si la DB falló
+      // Opcional: si la BD falla, eliminar el archivo subido previamente
       // await deleteFromS3(urlmedia);
-
-      throw dbError; // Mandamos al catch general para responder 500
+      throw dbError;
     }
 
-    // 3. Respuesta al cliente (Solo hasta que la DB confirmó todo)
+    // 3. Respuesta al cliente
     res.status(201).json({
       message: "Historia publicada con éxito",
       story: newStory,
     });
 
-    // 4. Notificaciones en segundo plano (Fuera del ciclo principal de res)
+    // 4. Notificaciones en segundo plano
     (async () => {
       try {
         const subscribers = await User.findAll({
@@ -104,7 +134,7 @@ const createStory = async (req, res) => {
           });
         }
       } catch (err) {
-        console.error("Error al enviar notificaciones Historias", err);
+        console.error("Error al enviar notificaciones de Historias:", err);
       }
     })();
   } catch (error) {
@@ -193,6 +223,7 @@ const getFeedStories = async (req, res) => {
         id: story.id,
         mediaUrl: getS3Url(story.mediaUrl),
         caption: story.caption,
+        type: story.type,
         createdAt: story.createdAt,
         expiresAt: story.expiresAt,
         isSeen: isSeenByCurrentUser,

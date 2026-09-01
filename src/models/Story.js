@@ -26,6 +26,11 @@ const Story = sequelize.define(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    type: {
+      type: DataTypes.ENUM("image", "video"),
+      allowNull: false,
+      defaultValue: "image",
+    },
     expiresAt: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -43,7 +48,7 @@ const Story = sequelize.define(
         fields: ["userId"], // Indexado para agrupar historias por usuario
       },
     ],
-  }
+  },
 );
 
 module.exports = Story;
