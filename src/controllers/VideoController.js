@@ -5,6 +5,7 @@ const {
   CreateMultipartUploadCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
+  DeleteObjectCommand,
 } = require("@aws-sdk/client-s3");
 const { Upload } = require("@aws-sdk/lib-storage");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
@@ -39,7 +40,7 @@ const generatePresignedUrl = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores DEL CURSO
       await CourseVideo.update(
         { is_active: false },
-        { where: { courseId }, transaction: t }
+        { where: { courseId }, transaction: t },
       );
 
       // 2️⃣ Crear registro nuevo
@@ -51,7 +52,7 @@ const generatePresignedUrl = async (req, res) => {
           is_active: true,
           durationSeconds,
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       // 3️⃣ Generar s3Key definitivo
@@ -186,7 +187,7 @@ const initMultipartUpload = async (req, res) => {
       // 1️⃣ Desactivar videos anteriores
       await CourseVideo.update(
         { is_active: true },
-        { where: { courseId }, transaction: t }
+        { where: { courseId }, transaction: t },
       );
 
       // 2️⃣ Crear registro del video (🔥 IGUAL QUE ANTES)
@@ -200,7 +201,7 @@ const initMultipartUpload = async (req, res) => {
           title,
           order,
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       // 3️⃣ Generar s3Key (🔥 INCLUYE video.id)
@@ -224,7 +225,7 @@ const initMultipartUpload = async (req, res) => {
     // (opcional) guardar uploadId
     await CourseVideo.update(
       { uploadId: UploadId },
-      { where: { id: result.videoId } }
+      { where: { id: result.videoId } },
     );
 
     return res.json({
@@ -279,7 +280,7 @@ const completeMultipartUpload = async (req, res) => {
 
     await CourseVideo.update(
       { status: "subiendo" },
-      { where: { id: videoId } }
+      { where: { id: videoId } },
     );
 
     res.json({ success: true });
@@ -289,10 +290,43 @@ const completeMultipartUpload = async (req, res) => {
   }
 };
 
+const deleteVideo = async (req, res) => {
+  const { videoId } = req.params;
+
+  if (!videoId) {
+    return res.status(400).json({ message: "videoId es obligatorio" });
+  }
+
+  try {
+    const video = await CourseVideo.findByPk(videoId);
+
+    if (!video) {
+      return res.status(404).json({ message: "Video no encontrado" });
+    }
+
+    // Eliminar de S3
+    const deleteCommand = new DeleteObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: video.s3Key,
+    });
+
+    await s3.send(deleteCommand);
+
+    // Eliminar de la base de datos
+    await video.destroy();
+
+    res.json({ message: "Video eliminado correctamente" });
+  } catch (error) {
+    console.error("Error eliminando video:", error);
+    res.status(500).json({ message: "Error eliminando video" });
+  }
+};
+
 module.exports = {
   generatePresignedUrl,
   initMultipartUpload,
   getMultipartPresignedUrl,
   completeMultipartUpload,
   updateVideo,
+  deleteVideo,
 };

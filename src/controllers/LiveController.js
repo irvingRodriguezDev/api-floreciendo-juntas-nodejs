@@ -16,6 +16,7 @@ const moment = require("moment-timezone");
 const { getIO } = require("../socket");
 const { startPoller, stopPoller } = require("../services/livePoller");
 const { sendNotificationToUsers } = require("../services/notificationService");
+const deleteFromS3 = require("../helpers/deleteFromS3");
 const nowCdmx = () => {
   return moment().tz("America/Mexico_City");
 };
@@ -232,6 +233,7 @@ const updateLive = async (req, res) => {
   try {
     const { id } = req.params;
     const live = await Live.findByPk(id);
+    const old_image = live.thumbnail_url;
 
     if (!live) return res.status(404).json({ message: "Live no encontrado" });
 
@@ -242,8 +244,14 @@ const updateLive = async (req, res) => {
     await live.update(updateData);
 
     // Si hay nueva imagen → subir y reemplazar
-    if (req.file) {
-      const s3Key = await uploadToS3("lives", req.file, id);
+    const newImage = req.file;
+    const uniqueId = crypto.randomUUID();
+
+    if (newImage) {
+      await deleteFromS3(old_image);
+
+      const s3Key = await uploadToS3("lives", newImage, uniqueId);
+
       live.thumbnail_url = s3Key;
       await live.save();
     }
@@ -525,10 +533,10 @@ const handleStreamEnd = async ({ channelArn }) => {
         });
 
         console.log(
-          `🔴 Live #${live.id} finalizado tras expirar el Grace Period (30s).`
+          `🔴 Live #${live.id} finalizado tras expirar el Grace Period (30s).`,
         );
       },
-      30000
+      30000,
     ); // 30 segundos de tolerancia
   } catch (error) {
     console.error("❌ Error en handleStreamEnd:", error);
@@ -564,10 +572,10 @@ const handleStreamFailure = async ({ channelArn, failedAt }) => {
         });
 
         console.log(
-          `⚠️ Live #${live.id} marcado como ERROR tras expirar Grace Period.`
+          `⚠️ Live #${live.id} marcado como ERROR tras expirar Grace Period.`,
         );
       },
-      60000
+      60000,
     );
   } catch (error) {
     console.error("❌ Error en handleStreamFailure:", error);

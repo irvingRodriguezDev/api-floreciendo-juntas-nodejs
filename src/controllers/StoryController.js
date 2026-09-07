@@ -28,7 +28,6 @@ const createStory = async (req, res) => {
   try {
     const userId = req.user.id;
     const { caption, mediaType } = req.body;
-    console.log(caption, "el caption");
 
     const file = req.file;
 

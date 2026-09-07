@@ -10,8 +10,9 @@ const {
 
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const fs = require("fs");
-const path = require('path');
+const path = require("path");
 const fontkit = require("@pdf-lib/fontkit");
+const deleteFromS3 = require("../helpers/deleteFromS3");
 
 // src/controllers/FormationsController.js
 
@@ -116,13 +117,15 @@ async function deleteFormation(req, res) {
         .json({ success: false, message: "Formación no encontrada" });
 
     // Soft-delete: desactivar la formación
-    formation.is_active = false;
-    await formation.save();
+    await formation.destroy();
 
     // Si quieres también eliminar el archivo en S3, añade un helper deleteFromS3 y llámalo aquí:
     // if (formation.diploma) await deleteFromS3(formation.diploma);
 
-    return res.json({ success: true, message: "Formación desactivada" });
+    return res.json({
+      success: true,
+      message: "La formación ha sido eliminada",
+    });
   } catch (err) {
     console.error(err);
     return res
@@ -418,28 +421,34 @@ const reviewModuleDelivery = async (req, res) => {
     if (status === "accepted") {
       delivery.status = "accepted";
       delivery.accepted = true;
-      delivery.acceptedDate = new Date(); // Seteamos la fecha de aprobación
+      delivery.acceptedDate = new Date();
+
+      // GUARDAR CAMBIOS EN BD
+      await delivery.save();
     } else {
-      delivery.status = "rejected";
-      delivery.accepted = false;
-      delivery.acceptedDate = null; // Nos aseguramos de limpiar la fecha si venía de un estado previo
-      delivery.urlDelivery = null; // Opcional: Limpiar la URL de la entrega rechazada para que el alumno vuelva a subir una nueva evidencia
+      // Si existe archivo en S3, eliminarlo
+      if (delivery.urlDelivery) {
+        await deleteFromS3(delivery.urlDelivery);
+      }
+
+      // ELIMINAR REGISTRO CON AWAIT
+      // Pasa { force: true } si tu modelo usa paranoid: true y quieres hard delete
+      await delivery.destroy({ force: true });
     }
 
-    // 4. Guardar los cambios en la base de datos
-    await delivery.save();
-
+    // 4. Retornar respuesta exitosa
     return res.status(200).json({
       message:
         status === "accepted"
           ? "La práctica ha sido aprobada con éxito."
-          : "La práctica ha sido rechazada.",
-      delivery,
+          : "La práctica ha sido rechazada y eliminada correctamente.",
+      ...(status === "accepted" && { delivery }),
     });
   } catch (error) {
     console.error("Error al evaluar el entregable:", error);
     return res.status(500).json({
       message: "Error interno del servidor al procesar la evaluación.",
+      error: error.message,
     });
   }
 };
@@ -488,11 +497,14 @@ const downloadDiploma = async (req, res) => {
       ],
     });
 
-    const totalModules = await FormationsModules.count({ where: { formationId } });
+    const totalModules = await FormationsModules.count({
+      where: { formationId },
+    });
 
     if (modules.length < totalModules) {
       return res.status(403).json({
-        message: "Debes tener todas las evidencias aceptadas para descargar el diploma",
+        message:
+          "Debes tener todas las evidencias aceptadas para descargar el diploma",
       });
     }
 

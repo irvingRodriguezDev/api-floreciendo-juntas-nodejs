@@ -3,7 +3,7 @@ const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const { limit = 50, offset = 0, unread } = req.query;
+    const { limit = 50, offset = 0 } = req.query;
 
     const where = { user_id: userId, readAt: null };
 

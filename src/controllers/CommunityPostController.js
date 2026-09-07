@@ -63,7 +63,6 @@ const createPost = async (req, res) => {
       const cleanUrl = attachmentUrl.replace(/^"|"$/g, "");
       await post.update({ attachments: cleanUrl });
     }
-    console.log("Este es el post en comentarios de curso");
 
     // Socket fuera de la transacción para no bloquear
     const io = socketModule.getIO();

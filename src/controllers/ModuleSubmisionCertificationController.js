@@ -10,6 +10,7 @@ const {
   ModuleCriterion,
 } = require("../models");
 const convertImageIfNeeded = require("../helpers/convertImages");
+const deleteFromS3 = require("../helpers/deleteFromS3");
 const ALLOWED_MIME_TYPES = [
   // Imágenes
   "image/jpeg",
@@ -397,24 +398,37 @@ const deleteSubmissionPending = async (req, res) => {
   try {
     const { submissionId } = req.body;
 
-    // 1. Debes usar 'await' porque destroy es una promesa.
-    // 2. En Sequelize, .destroy() ejecuta el DELETE de inmediato,
-    //    NO existe .save() después de un destroy.
-    const deletedRows = await ModuleSubmission.destroy({
-      where: { id: submissionId },
-      force: true, // <--- CRÍTICO: 'force: true' obliga al borrado físico si el modelo tiene 'paranoid: true'
+    // 1. Buscar la entrega primero
+    const submission = await ModuleSubmission.findOne({
+      where: { id: submissionId, status: "submitted" },
     });
 
-    // Validamos si realmente se borró algo
-    if (deletedRows === 0) {
+    if (!submission) {
       return res.status(404).json({
-        message: "No se encontró el entregable o ya fue eliminado.",
+        message:
+          "No se encontró el entregable pendiente de revisión o ya fue procesado.",
       });
     }
 
+    // 2. Recopilar fotos existentes y eliminarlas en PARALELO
+    const photosToDelete = [
+      submission.photo_1,
+      submission.photo_2,
+      submission.photo_3,
+    ].filter(Boolean); // Filtra valores null o undefined
+
+    if (photosToDelete.length > 0) {
+      await Promise.all(
+        photosToDelete.map((photoKey) => deleteFromS3(photoKey)),
+      );
+    }
+
+    // 3. Borrar el registro de la base de datos (físico/hard delete)
+    await submission.destroy({ force: true });
+
     return res.status(200).json({
       message: "El entregable ha sido borrado físicamente de manera correcta",
-      submissionId: submissionId,
+      submissionId,
     });
   } catch (error) {
     console.error("Error al eliminar entregable:", error);

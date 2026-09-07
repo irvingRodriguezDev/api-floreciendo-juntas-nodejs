@@ -3,18 +3,7 @@ const { Op } = require("sequelize");
 const { Notifications, NotificationToken } = require("../models");
 const { sendPushNotificationMulticast } = require("./sendPushNotification");
 const emitNotification = require("../helpers/emitNotification");
-/**
- * Helper centralizado para notificaciones (BD + Socket + Push FCM)
- * @param {Object} params
- * @param {number|number[]} params.recipientIds - ID o Array de IDs de usuarios destino
- * @param {number} params.actorId - Creador de la acción (quien genera la notif)
- * @param {string} params.type - Tipo de notificación ('comment', 'comment_thread', etc.)
- * @param {number|string} params.entityId - ID de la entidad relacionada
- * @param {string} params.title - Título de la notificación
- * @param {string} params.body - Mensaje / Cuerpo
- * @param {string} params.url - Ruta para redirección en frontend
- * @param {Object} [params.extraData={}] - Payload extra para FCM o BD
- */
+
 const sendNotificationToUsers = async ({
   recipientIds,
   actorId,
@@ -49,7 +38,7 @@ const sendNotificationToUsers = async ({
 
     const createdNotifications = await Notifications.bulkCreate(
       notificationsToCreate,
-      { returning: true }
+      { returning: true },
     );
 
     // 2. Emitir evento por Sockets en tiempo real
@@ -87,7 +76,7 @@ const sendNotificationToUsers = async ({
           body,
           data: payloadData,
         }).catch((err) =>
-          console.error("⚠️ Error FCM Multicast en batch:", err)
+          console.error("⚠️ Error FCM Multicast en batch:", err),
         );
       }
     }
