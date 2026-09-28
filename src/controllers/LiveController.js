@@ -400,8 +400,6 @@ const handleIvsWebhook = async (req, res) => {
 
 const handleStreamStart = async ({ channelArn, streamId }) => {
   try {
-    const now = nowCdmx();
-
     // A) Si fue una reconexión dentro del Grace Period, cancelamos el timer de cierre
     cancelDisconnect(channelArn);
 
@@ -430,8 +428,10 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
     }
 
     // C) Si es un inicio nuevo desde 'scheduled'
-    const minTime = now.clone().subtract(30, "minutes").toDate();
-    const maxTime = now.clone().add(15, "minutes").toDate();
+    const now = nowCdmx();
+
+    const minTime = now.clone().subtract(30, "minutes");
+    const maxTime = now.clone().add(30, "minutes");
 
     live = await Live.findOne({
       where: {
@@ -473,6 +473,11 @@ const handleStreamStart = async ({ channelArn, streamId }) => {
           raw: true,
         });
         const recipientIds = suscribers.map((u) => u.id);
+        const notifTitle = "🎥 Transmisión en Vivo 🔴";
+        const notifBody = live.title
+          ? `"${live.title}" está en vivo en este momento.`
+          : "Una nueva clase en vivo está transmitiéndose ahora.";
+        const notifUrl = `/detalle-live/${live.id}`;
         if (recipientIds.length > 0) {
           await sendNotificationToUsers({
             recipientIds,

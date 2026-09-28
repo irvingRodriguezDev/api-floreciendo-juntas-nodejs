@@ -245,11 +245,13 @@ const generateLinks = async (req, res) => {
 const showTicket = async (req, res) => {
   try {
     const { code } = req.params;
-    console.log(code, "el codigo");
 
     // 1. IMPORTANTE: Agregar el await para esperar a la DB
     // 2. Opcional: .lean() mejora el rendimiento si solo vas a leer datos
-    const ticket = await Ticket.findOne({ where: { code: code } });
+    const ticket = await Ticket.findOne({
+      where: { code: code },
+      include: [{ model: Event }],
+    });
 
     // 3. Validar si el ticket realmente existe
     if (!ticket) {
@@ -259,7 +261,7 @@ const showTicket = async (req, res) => {
     }
 
     // 4. Retornar el ticket encontrado
-    return res.status(200).json({ ticket });
+    return res.status(200).json(ticket);
   } catch (error) {
     console.error("Error mostrando el ticket:", error);
     res.status(500).json({
@@ -271,6 +273,8 @@ const showTicket = async (req, res) => {
 
 const searchTicketsByEmail = async (req, res) => {
   try {
+    console.log("Entra la peticion de buscar tickets");
+
     const { email } = req.query;
 
     // 1. Validar que el email venga en los query params

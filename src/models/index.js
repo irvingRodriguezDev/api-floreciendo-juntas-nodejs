@@ -18,6 +18,8 @@ const CommunityComment = require("./CommunityComment");
 const CertificateCourse = require("./CertificateCourse");
 const Event = require("./Event");
 const Ticket = require("./Ticket");
+const Booking = require("./Booking");
+const PaymentTicket = require("./PaymentTicket");
 const Product = require("./Product");
 const ProductImage = require("./ProductImages");
 const Cart = require("./Cart");
@@ -74,6 +76,8 @@ const db = {
   CertificateCourse,
   Event,
   Ticket,
+  Booking,
+  PaymentTicket,
   Product,
   ProductImage,
   Cart,

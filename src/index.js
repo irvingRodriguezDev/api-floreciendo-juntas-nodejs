@@ -14,6 +14,9 @@ const webhookController = require("./controllers/WebhookController");
 const socketAuth = require("./sockets/socketAuth");
 const liveSocket = require("./sockets/live.socket");
 const { initCronJobs } = require("./services/cronService");
+const {
+  handleBookingStripeWebhook,
+} = require("./controllers/TicketWebhookController");
 
 const app = express();
 
@@ -34,8 +37,10 @@ const corsOptions = {
     "https://localhost:3001",
     "http://localhost:3000",
     "http://localhost:5173",
+    "http://localhost:5174",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
     "https://far-helen-unlike-testimony.trycloudflare.com",
+    "https://charter-sleep-wiley-substantially.trycloudflare.com",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -55,9 +60,9 @@ app.post(
   webhookController.handleSubscriptionStripeWebhook,
 );
 app.post(
-  "/webhooks/stripe/ticket",
+  "/webhooks/stripe/ticketsOrBookings",
   bodyParser.raw({ type: "application/json" }),
-  webhookController.handleTicketStripeWebhook,
+  handleBookingStripeWebhook,
 );
 app.post(
   "/webhooks/stripe/order-payments",
