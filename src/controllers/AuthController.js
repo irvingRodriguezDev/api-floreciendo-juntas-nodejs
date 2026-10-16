@@ -72,6 +72,13 @@ const register = async (req, res) => {
         .status(400)
         .json({ msg: "El correo ingresado ya esta registrado" });
 
+    const phoneExists = await User.findOne({ where: { phone }, attributes: ["id"],});
+
+    if (phoneExists)
+      return res
+        .status(400)
+        .json({ msg: "Este número ingresado ya esta registrado", });
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const sessionId = uuidv4();
 
