@@ -1,6 +1,8 @@
 // backend/middleware/socketAuth.js
 const jwt = require("jsonwebtoken");
-const cookie = require("cookie");
+const cookie = require("cookie"); // 👈 Usamos la librería 'cookie'
+// ❌ Ya no necesitamos require("cookie-parser") aquí
+
 module.exports = (socket, next) => {
   try {
     const cookieHeader = socket.handshake.headers.cookie;
@@ -9,7 +11,9 @@ module.exports = (socket, next) => {
         new Error("Autenticación fallida: No se encontraron cookies"),
       );
     }
-    const cookies = cookie.parse(cookieHeader);
+
+    // ✅ CORRECCIÓN: Usamos cookie.parse() en lugar de cookieParser()
+    const cookies = cookie.parseCookie(cookieHeader);
     let token = cookies.token;
 
     if (!token) return next(new Error("AuthError: Token requerido"));
@@ -18,30 +22,27 @@ module.exports = (socket, next) => {
       token = token.split(" ")[1];
     }
 
-    // 💡 Verifica el JWT. Si expira, el catch atrapará el error.
+    // 💡 Verifica el JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // ⭐ OPTIMIZACIÓN: Usa los datos del token directamente.
-    // NO uses User.findByPk(decoded.id) aquí.
     socket.user = {
       id: decoded.id,
       name: decoded.name,
       role: decoded.roleId === 1 ? "admin" : "owner",
     };
+
     if (decoded.id) {
       const room = `user:${String(decoded.id)}`;
-      socket.join(room); // 👈 ESTO ES LO NECESARIO
+      socket.join(room);
     }
 
     next();
   } catch (err) {
-    // Si el error es por expiración, enviamos un mensaje claro
     const message =
       err.name === "TokenExpiredError"
         ? "AuthError: Expired"
         : "AuthError: Invalid";
 
-    // Solo logueamos errores que NO sean de expiración para limpiar los logs de Fargate
     if (err.name !== "TokenExpiredError") {
       console.error(`❌ Socket Auth: ${err.message}`);
     }

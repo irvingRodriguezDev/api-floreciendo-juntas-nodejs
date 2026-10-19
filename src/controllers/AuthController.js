@@ -56,8 +56,8 @@ const login = async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: isProduction, // 👈 Falso en desarrollo (HTTP), verdadero en producción (HTTPS)
-      sameSite: "strict", // 👈 'lax' para local en distintos puertos, 'none' para producción cruzada
+      secure: true, // 👈 Falso en desarrollo (HTTP), verdadero en producción (HTTPS)
+      sameSite: "none", // 👈 'lax' para local en distintos puertos, 'none' para producción cruzada
       maxAge: 24 * 60 * 60 * 1000, // 24 horas
     });
     res.json({ msg: "Login exitoso", token, user: safeUser });
