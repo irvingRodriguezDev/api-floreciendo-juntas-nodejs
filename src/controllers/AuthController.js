@@ -52,7 +52,14 @@ const login = async (req, res) => {
     const { password: _, ...safeUser } = user.toJSON();
     // Normalizamos la imagen de perfil en la respuesta del login
     safeUser.profileImage = getS3Url(safeUser.profileImage);
+    const isProduction = process.env.NODE_ENV === "production";
 
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: isProduction, // 👈 Falso en desarrollo (HTTP), verdadero en producción (HTTPS)
+      sameSite: "strict", // 👈 'lax' para local en distintos puertos, 'none' para producción cruzada
+      maxAge: 24 * 60 * 60 * 1000, // 24 horas
+    });
     res.json({ msg: "Login exitoso", token, user: safeUser });
   } catch (error) {
     console.error("Login error fatal:", error);
@@ -72,12 +79,15 @@ const register = async (req, res) => {
         .status(400)
         .json({ msg: "El correo ingresado ya esta registrado" });
 
-    const phoneExists = await User.findOne({ where: { phone }, attributes: ["id"],});
+    const phoneExists = await User.findOne({
+      where: { phone },
+      attributes: ["id"],
+    });
 
     if (phoneExists)
       return res
         .status(400)
-        .json({ msg: "Este número ingresado ya esta registrado", });
+        .json({ msg: "Este número ingresado ya esta registrado" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const sessionId = uuidv4();
@@ -103,12 +113,18 @@ const register = async (req, res) => {
         sessionId,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "12h" },
+      { expiresIn: "24h" },
     );
+    const isProduction = process.env.NODE_ENV === "production";
 
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: isProduction, // 👈 Falso en desarrollo (HTTP), verdadero en producción (HTTPS)
+      sameSite: "strict", // 👈 'lax' para local en distintos puertos, 'none' para producción cruzada
+      maxAge: 24 * 60 * 60 * 1000, // 24 horas
+    });
     res.status(200).json({
       msg: "Usuario registrado",
-      token,
       user: { id: newUser.id, email, name, username, roleId: 4 },
     });
   } catch (error) {
