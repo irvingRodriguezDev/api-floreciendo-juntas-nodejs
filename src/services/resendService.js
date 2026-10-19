@@ -1,6 +1,7 @@
 // services/resendService.js
 const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendKey = process.env.RESEND_API_KEY; // Reemplaza con tu clave de API de Resend
+const resend = new Resend(resendKey);
 
 const templateA = require("../templates/templateA_Full");
 const templateB = require("../templates/templateB_Deposit");

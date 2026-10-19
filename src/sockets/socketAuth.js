@@ -1,9 +1,17 @@
 // backend/middleware/socketAuth.js
 const jwt = require("jsonwebtoken");
-
+const cookie = require("cookie");
 module.exports = (socket, next) => {
   try {
-    let token = socket.handshake.auth?.token;
+    const cookieHeader = socket.handshake.headers.cookie;
+    if (!cookieHeader) {
+      return next(
+        new Error("Autenticación fallida: No se encontraron cookies"),
+      );
+    }
+    const cookies = cookie.parse(cookieHeader);
+    let token = cookies.token;
+
     if (!token) return next(new Error("AuthError: Token requerido"));
 
     if (token.startsWith("Bearer ")) {

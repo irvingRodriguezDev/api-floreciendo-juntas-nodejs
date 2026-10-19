@@ -3,6 +3,7 @@ process.env.TZ = "America/Mexico_City";
 
 const express = require("express");
 const rateLimit = require("express-rate-limit");
+const cookieParser = require("cookie-parser");
 const http = require("http");
 const { init } = require("./socket");
 const sequelize = require("./config/db");
@@ -40,13 +41,15 @@ const corsOptions = {
     "http://localhost:5174",
     "https://excogitable-mavis-sulfureous.ngrok-free.dev",
     "https://far-helen-unlike-testimony.trycloudflare.com",
-    "https://charter-sleep-wiley-substantially.trycloudflare.com",
+    "https://meyer-framed-photography-legislative.trycloudflare.com",
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };
 
+app.use(cors(corsOptions));
+app.use(cookieParser()); // 👈 Asegúrate de tener esto configurado en tu app principal de Express
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
@@ -69,7 +72,6 @@ app.post(
   bodyParser.raw({ type: "application/json" }),
   webhookController.handleOrderPaymentStripeWebhook,
 );
-app.use(cors(corsOptions));
 // app.options("*", cors(corsOptions));
 
 app.use(express.json({ limit: "20mb" }));
