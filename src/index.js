@@ -15,9 +15,6 @@ const webhookController = require("./controllers/WebhookController");
 const socketAuth = require("./sockets/socketAuth");
 const liveSocket = require("./sockets/live.socket");
 const { initCronJobs } = require("./services/cronService");
-const {
-  handleBookingStripeWebhook,
-} = require("./controllers/TicketWebhookController");
 
 const app = express();
 
@@ -62,11 +59,7 @@ app.post(
   express.raw({ type: "application/json" }),
   webhookController.handleSubscriptionStripeWebhook,
 );
-app.post(
-  "/webhooks/stripe/ticketsOrBookings",
-  bodyParser.raw({ type: "application/json" }),
-  handleBookingStripeWebhook,
-);
+
 app.post(
   "/webhooks/stripe/order-payments",
   bodyParser.raw({ type: "application/json" }),
