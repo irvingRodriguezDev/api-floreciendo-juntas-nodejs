@@ -10,7 +10,13 @@ router.get(
   // authMiddleware,
   usrCtrl.obtainWinnersOfMonth,
 );
+router.get(
+  "/run-raffle-personalize",
+  authMiddleware,
+  usrCtrl.runRaffleOneWinnerPersonalize,
+);
 router.get("/run-raffle", authMiddleware, usrCtrl.runRaffleOneWinner);
+
 router.post("/create-prize", authMiddleware, prizeCtrl.createPrize);
 router.get("/montlhy-prizes", authMiddleware, prizeCtrl.getMonthlyPrizes);
 router.get("/available-prizes", authMiddleware, prizeCtrl.availablePrizes);

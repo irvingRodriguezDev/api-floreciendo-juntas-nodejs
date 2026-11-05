@@ -437,7 +437,7 @@ const getTopViewedCourses = async (req, res) => {
       ],
       group: ["courseId"],
       order: [[Sequelize.literal("viewsCount"), "DESC"]],
-      limit: 10,
+      limit: 20,
       raw: true,
     });
 

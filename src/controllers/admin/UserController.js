@@ -7,7 +7,12 @@ const {
   RaffleWinner,
   Subscription,
 } = require("../../models");
-const { getEligibleUsers, getTop100Pool } = require("../../helpers/raffle");
+const {
+  getEligibleUsers,
+  getTop100Pool,
+  getTop100PoolAndWinner,
+  getEligibleUsersAndDrawWinners,
+} = require("../../helpers/raffle");
 const sequelize = require("../../config/db");
 
 const getAllUsers = async (req, res) => {
@@ -54,7 +59,7 @@ const eligibleUsers = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-
+// funcion para seleccionar al ganador del sorteo
 const runRaffleOneWinner = async (req, res) => {
   const now = new Date();
   const currentMonth = format(now, "yyyy-MM");
@@ -113,19 +118,19 @@ const runRaffleOneWinner = async (req, res) => {
         // ────────────────────────────────────────────────────────────────────
         // POOL PREMIUM — Top 100 por puntos (Sorteo Equitativo)
         // ────────────────────────────────────────────────────────────────────
-        let top100 = await getTop100Pool({
+        let top100 = await getTop100PoolAndWinner({
           excludeIds: numericExcludedIds,
           transaction: t,
         });
 
         // Escudo secundario en memoria por si el operador SQL falló
         top100 = top100.filter(
-          (user) => !numericExcludedIds.includes(Number(user.id))
+          (user) => !numericExcludedIds.includes(Number(user.id)),
         );
 
         if (!top100.length) {
           throw new Error(
-            "No hay usuarios elegibles en el Top 100 para el premio premium."
+            "No hay usuarios elegibles en el Top 100 para el premio premium.",
           );
         }
 
@@ -142,12 +147,12 @@ const runRaffleOneWinner = async (req, res) => {
 
         // Escudo secundario en memoria por si el operador SQL falló
         eligibleUsersList = eligibleUsersList.filter(
-          (user) => !numericExcludedIds.includes(Number(user.id))
+          (user) => !numericExcludedIds.includes(Number(user.id)),
         );
 
         if (!eligibleUsersList.length) {
           throw new Error(
-            "No hay usuarios elegibles para el sorteo de este premio."
+            "No hay usuarios elegibles para el sorteo de este premio.",
           );
         }
 
@@ -175,7 +180,7 @@ const runRaffleOneWinner = async (req, res) => {
       // Failsafe final: Si por algún motivo místico se llegó hasta aquí con un clon, cancelamos
       if (winnerUser && numericExcludedIds.includes(Number(winnerUser.id))) {
         throw new Error(
-          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`
+          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`,
         );
       }
 
@@ -196,7 +201,174 @@ const runRaffleOneWinner = async (req, res) => {
           raffle_month: currentMonth,
           position: winnersCount + 1,
         },
-        { transaction: t }
+        { transaction: t },
+      );
+
+      await prize.update({ status: "awarded" }, { transaction: t });
+
+      finalResult = {
+        winner: {
+          id: winnerUser.id,
+          name: winnerUser.name,
+          email: winnerUser.email,
+          total_points: winnerUser.total_points,
+          tiktokUsername: winnerUser.tiktokUsername || null,
+        },
+        prize: {
+          id: prize.id,
+          name: prize.prize_name,
+          position: prizePosition,
+          isPremium: prize.isPremium,
+        },
+        raffle_record: createdWinner,
+      };
+    });
+
+    return res.status(200).json({
+      message: "¡Ganador seleccionado correctamente!",
+      ...finalResult,
+    });
+  } catch (error) {
+    console.error("❌ Error en runRaffleOneWinner:", error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const runRaffleOneWinnerPersonalize = async (req, res) => {
+  const now = new Date();
+  const currentMonth = format(now, "yyyy-MM");
+
+  // Puedes definir o recibir tus rangos de fechas de registro/suscripción aquí
+  const startDate = "2026-01-20 15:00:00";
+  const endDate = "2026-02-28 11:59:59";
+
+  try {
+    let finalResult;
+
+    await sequelize.transaction(async (t) => {
+      // ── 1. Obtener TODOS los premios del mes ordenados ──────────────────────
+      const monthlyPrizes = await MonthlyPrize.findAll({
+        where: { raffle_month: currentMonth },
+        order: [["id", "ASC"]],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!monthlyPrizes.length) {
+        throw new Error("No hay premios creados este mes.");
+      }
+
+      // ── 2. Obtener IDs de premios ya entregados ─────────────────────────────
+      const awardedIds = monthlyPrizes
+        .filter((p) => p.status === "awarded")
+        .map((p) => p.id);
+
+      // ── 3. Siguiente premio disponible ──────────────────────────────────────
+      const prize = monthlyPrizes.find((p) => !awardedIds.includes(p.id));
+
+      if (!prize) {
+        throw new Error("Todos los premios de este mes ya fueron entregados.");
+      }
+
+      const prizePosition =
+        monthlyPrizes.findIndex((p) => p.id === prize.id) + 1;
+
+      // ── 4. Excluir ganadores HISTÓRICOS (Exclusión GLOBAL y absoluta) ───────
+      const winnersToExclude = await RaffleWinner.findAll({
+        attributes: ["user_id"],
+        raw: true,
+        transaction: t,
+      });
+
+      const excludedIds = winnersToExclude
+        .map((w) => w.user_id || w.userId)
+        .filter((id) => id !== undefined && id !== null && id !== "");
+
+      const numericExcludedIds = excludedIds.map(Number);
+
+      // ── 5. Obtener el universo elegible con las fechas correctas ───────────
+      // Reutilizamos la lógica combinada para obtener el pool filtrado por fechas y exclusiones
+      const { premiumWinners, remainingPool } =
+        await getEligibleUsersAndDrawWinners({
+          excludeIds: numericExcludedIds,
+          startDate,
+          endDate,
+          transaction: t,
+        });
+
+      let winnerUser = null;
+
+      if (prize.isPremium) {
+        // ────────────────────────────────────────────────────────────────────
+        // PREMIO PREMIUM — Seleccionamos estrictamente al usuario con más puntos disponibles
+        // ────────────────────────────────────────────────────────────────────
+        if (!premiumWinners.length) {
+          throw new Error("No hay usuarios elegibles para el premio premium.");
+        }
+
+        // Tomamos el primero del top (ordenado por mayor puntaje)
+        winnerUser = premiumWinners[0];
+
+        // Opcional: Si tienes más de un premio premium y quieres asegurar que no se repita
+        // en el mismo ciclo, puedes removerlo de premiumWinners o gestionarlo con la tabla de ganadores.
+      } else {
+        // ────────────────────────────────────────────────────────────────────
+        // PREMIO NORMAL — Sorteo PONDERADO por puntos² usando el pool restante
+        // ────────────────────────────────────────────────────────────────────
+        let eligibleUsersList = remainingPool;
+
+        if (!eligibleUsersList.length) {
+          throw new Error(
+            "No hay usuarios elegibles para el sorteo de este premio normal.",
+          );
+        }
+
+        // Calcular el total de tickets (puntos²)
+        const totalTickets = eligibleUsersList.reduce((sum, user) => {
+          const points = user.total_points > 0 ? user.total_points : 1;
+          return sum + Math.pow(points, 2);
+        }, 0);
+
+        let random = Math.floor(Math.random() * totalTickets);
+
+        for (const user of eligibleUsersList) {
+          const points = user.total_points > 0 ? user.total_points : 1;
+          const tickets = Math.pow(points, 2);
+
+          if (random < tickets) {
+            winnerUser = user;
+            break;
+          }
+
+          random -= tickets;
+        }
+      }
+
+      // Failsafe final
+      if (winnerUser && numericExcludedIds.includes(Number(winnerUser.id))) {
+        throw new Error(
+          `Acción bloqueada: El sistema intentó asignar el premio al usuario ID ${winnerUser.id}, quien ya es un ganador histórico.`,
+        );
+      }
+
+      if (!winnerUser) {
+        throw new Error("No se pudo determinar un ganador.");
+      }
+
+      // ── 6. Registrar ganador histórico y actualizar premio ──────────────────
+      const winnersCount = await RaffleWinner.count({
+        where: { raffle_month: currentMonth },
+        transaction: t,
+      });
+
+      const createdWinner = await RaffleWinner.create(
+        {
+          user_id: winnerUser.id,
+          prize_id: prize.id,
+          raffle_month: currentMonth,
+          position: winnersCount + 1,
+        },
+        { transaction: t },
       );
 
       await prize.update({ status: "awarded" }, { transaction: t });
@@ -291,4 +463,5 @@ module.exports = {
   runRaffleOneWinner,
   eligibleUsers,
   obtainWinnersOfMonth,
+  runRaffleOneWinnerPersonalize,
 };
