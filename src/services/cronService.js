@@ -3,6 +3,9 @@ const { Notifications, Live, Post } = require("../models");
 const { Op } = require("sequelize");
 const { getStreamViewers } = require("./awsIvsService");
 const { getIO } = require("../socket");
+const {
+  sendSubscriptionReminders,
+} = require("../services/sendSubscriptionReminders");
 
 /**
  * Tarea programada para limpiar notificaciones
@@ -102,5 +105,19 @@ const initCronJobs = () => {
     }
   });
 };
+
+// Recordatorios de renovación: todos los días a las 00:00
+cron.schedule(
+  "0 0 * * *",
+  async () => {
+    console.log("📧 Iniciando recordatorios de suscripciones...");
+
+    await sendSubscriptionReminders();
+  },
+  {
+    scheduled: true,
+    timezone: "America/Mexico_City",
+  },
+);
 
 module.exports = { initCronJobs };
