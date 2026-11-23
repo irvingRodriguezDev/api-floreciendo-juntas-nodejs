@@ -149,6 +149,8 @@ const me = async (req, res) => {
         "tiktokUsername",
         "birthDate",
         "isVerified",
+        "termsAccepted",
+        "termsAcceptedAt",
       ],
       include: [
         {
@@ -586,6 +588,50 @@ const getTodayBirthdays = async (req, res) => {
     });
   }
 };
+
+
+const acceptTerms = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        message: "No se pudo identificar al usuario.",
+      });
+    }
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "Usuario no encontrado.",
+      });
+    }
+
+    await user.update({
+      termsAccepted: true,
+      termsAcceptedAt: new Date(),
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: "Términos y condiciones aceptados correctamente.",
+      termsAccepted: true,
+    });
+
+  } catch (error) {
+    console.error("Error al aceptar términos:", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Error al guardar la aceptación.",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -598,4 +644,5 @@ module.exports = {
   updateInfoUser,
   saveBirthDate,
   getTodayBirthdays,
+  acceptTerms,
 };

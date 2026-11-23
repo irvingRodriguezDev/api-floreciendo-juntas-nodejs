@@ -11,6 +11,7 @@ const {
   updateInfoUser,
   saveBirthDate,
   getTodayBirthdays,
+  acceptTerms,
 } = require("../controllers/AuthController");
 const { authMiddleware } = require("../middlewares/authMiddleware");
 const checkRole = require("../middlewares/roleMiddleware");
@@ -33,6 +34,7 @@ router.get("/cumpleaneras", authMiddleware, getTodayBirthdays);
 router.get("/me", authMiddleware, me);
 router.put("/user/update", authMiddleware, updateInfoUser);
 router.post("/logout", authMiddleware, logout);
+router.post("/acceptTerms", authMiddleware, acceptTerms);
 // Solo admin puede crear otros usuarios especiales
 router.post(
   "/create-user",
